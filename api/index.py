@@ -1555,16 +1555,31 @@ async def register(data: dict):
 
 @app.post("/api/login")
 async def login(data: dict, response: Response):
-    rows = await db_execute("SELECT * FROM users WHERE username = ? AND password_hash = ?",
-                            [data["username"], data["password"]])
+    # Step 1: find user by username
+    rows = await db_execute("SELECT * FROM users WHERE username = ?", [data["username"]])
     if not rows:
-        raise HTTPException(401)
+        raise HTTPException(401, detail="User not found")
+
     user = rows[0]
-    token = jwt.encode({"user_id": user["id"], "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}, JWT_SECRET)
+    stored_password = user.get("password_hash", "")
+
+    # Step 2: compare plain‑text passwords (replace with hash in production)
+    if stored_password != data["password"]:
+        # Log both values for debugging – check Vercel Function Logs
+        logger.warning(f"Password mismatch for user {data['username']}: stored='{stored_password}', provided='{data['password']}'")
+        raise HTTPException(401, detail="Invalid credentials")
+
+    # Step 3: create JWT & session
+    token = jwt.encode(
+        {"user_id": user["id"], "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)},
+        JWT_SECRET
+    )
     response.set_cookie("token", token, httponly=True, secure=True, samesite="lax")
     sess_id = str(uuid.uuid4())
-    await db_run("INSERT INTO sessions (id, user_id, ip, browser) VALUES (?, ?, ?, ?)",
-                 [sess_id, user["id"], "unknown", "unknown"])
+    await db_run(
+        "INSERT INTO sessions (id, user_id, ip, browser) VALUES (?, ?, ?, ?)",
+        [sess_id, user["id"], "unknown", "unknown"]
+    )
     return {"ok": True}
 
 @app.get("/api/me")
