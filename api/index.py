@@ -51,9 +51,7 @@ async def turso_request(sql: str, params: list = None):
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, headers=headers, json=body, timeout=30.0)
         data = resp.json()
-        if resp.status_code != 200:
-            logger.error(f"Turso error: {data}")
-            raise HTTPException(500, f"DB error: {resp.status_code}")
+        if resp.status_code != 200: raise HTTPException(500, f"DB error: {resp.status_code}")
         results = data.get("results", [])
         if not results: return {"rows": [], "rows_written": 0, "rows_read": 0}
         first = results[0]
@@ -106,7 +104,7 @@ def group_reactions(rows):
         groups[e]["users"].append({"user_id": r["user_id"], "username": r.get("username","")})
     return list(groups.values())
 
-# ---------- Embedded Frontend (Complete UI) ----------
+# ---------- Embedded Frontend (Full Featured) ----------
 FRONTEND_HTML = r"""
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -119,71 +117,30 @@ FRONTEND_HTML = r"""
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg-main: #111b21;
-      --bg-panel: #202c33;
-      --bg-chat: #0b141a;
-      --outgoing-bubble: #005c4b;
-      --incoming-bubble: #202c33;
-      --accent: #00a884;
-      --red: #f15c6d;
-      --text-primary: #e9edef;
-      --text-secondary: #8696a0;
-      --radius-bubble: 8px;
-      --radius-modal: 12px;
-      --font-family: 'Inter', sans-serif;
-      --transition: 0.2s ease;
+      --bg-main: #111b21; --bg-panel: #202c33; --bg-chat: #0b141a;
+      --outgoing-bubble: #005c4b; --incoming-bubble: #202c33; --accent: #00a884;
+      --red: #f15c6d; --text-primary: #e9edef; --text-secondary: #8696a0;
+      --radius-bubble: 8px; --radius-modal: 12px; --font-family: 'Inter', sans-serif;
     }
     [data-theme="light"] {
-      --bg-main: #f0f2f5;
-      --bg-panel: #ffffff;
-      --bg-chat: #efeae2;
-      --outgoing-bubble: #d9fdd3;
-      --incoming-bubble: #ffffff;
-      --accent: #008069;
-      --text-primary: #111b21;
-      --text-secondary: #667781;
+      --bg-main: #f0f2f5; --bg-panel: #ffffff; --bg-chat: #efeae2;
+      --outgoing-bubble: #d9fdd3; --incoming-bubble: #ffffff; --accent: #008069;
+      --text-primary: #111b21; --text-secondary: #667781;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: var(--font-family);
-      background: var(--bg-main);
-      color: var(--text-primary);
-      height: 100vh;
-      overflow: hidden;
-      -webkit-tap-highlight-color: transparent;
-    }
+    body { font-family: var(--font-family); background: var(--bg-main); color: var(--text-primary); height: 100vh; overflow: hidden; }
     #app { display: flex; height: 100vh; }
-    /* Sidebar */
-    .sidebar {
-      width: 35%; min-width: 320px; max-width: 500px;
-      background: var(--bg-panel);
-      display: flex; flex-direction: column;
-      border-right: 1px solid rgba(0,0,0,0.2);
-    }
-    .sidebar-header {
-      display: flex; align-items: center; padding: 12px 16px;
-      background: var(--bg-panel); gap: 10px;
-    }
+    .sidebar { width: 35%; min-width: 320px; max-width: 500px; background: var(--bg-panel); display: flex; flex-direction: column; border-right: 1px solid rgba(0,0,0,0.2); }
+    .sidebar-header { display: flex; align-items: center; padding: 12px 16px; background: var(--bg-panel); gap: 10px; }
     .sidebar-header .avatar { width: 44px; height: 44px; border-radius: 50%; cursor: pointer; }
     .sidebar-header .user-info { flex: 1; }
     .sidebar-header .user-name { font-weight: 600; font-size: 15px; }
     .sidebar-header .user-status { font-size: 12px; color: var(--text-secondary); }
     .search-box { padding: 0 12px 10px; position: relative; }
-    .search-box input {
-      width: 100%; padding: 10px 12px 10px 40px; border-radius: 8px;
-      border: none; background: var(--bg-main); color: var(--text-primary);
-      font-size: 14px; outline: none;
-    }
-    .search-box .search-icon {
-      position: absolute; left: 22px; top: 50%; transform: translateY(-50%);
-      color: var(--text-secondary); font-size: 16px;
-    }
+    .search-box input { width: 100%; padding: 10px 12px 10px 40px; border-radius: 8px; border: none; background: var(--bg-main); color: var(--text-primary); font-size: 14px; outline: none; }
+    .search-box .search-icon { position: absolute; left: 22px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); font-size: 16px; }
     .channel-list { overflow-y: auto; flex: 1; }
-    .channel-item {
-      display: flex; align-items: center; padding: 12px 16px;
-      cursor: pointer; transition: background 0.15s; gap: 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.05);
-    }
+    .channel-item { display: flex; align-items: center; padding: 12px 16px; cursor: pointer; transition: background 0.15s; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
     .channel-item:hover { background: rgba(255,255,255,0.04); }
     .channel-item.active { background: rgba(0,168,132,0.15); }
     .channel-avatar { width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0; }
@@ -193,118 +150,38 @@ FRONTEND_HTML = r"""
     .channel-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
     .unread-badge { background: var(--accent); color: white; border-radius: 12px; min-width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; padding: 0 6px; }
     .channel-time { font-size: 11px; color: var(--text-secondary); }
-    /* Chat Area */
-    .chat-area {
-      flex: 1; display: flex; flex-direction: column;
-      background: var(--bg-chat); position: relative;
-    }
-    .chat-header {
-      display: flex; align-items: center; padding: 12px 16px;
-      background: var(--bg-panel); gap: 10px; border-bottom: 1px solid rgba(0,0,0,0.1);
-    }
-    .chat-header .back-btn {
-      display: none; background: none; border: none; color: var(--text-primary);
-      font-size: 20px; cursor: pointer; margin-right: 8px;
-    }
+    .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-chat); position: relative; }
+    .chat-header { display: flex; align-items: center; padding: 12px 16px; background: var(--bg-panel); gap: 10px; border-bottom: 1px solid rgba(0,0,0,0.1); }
     .chat-title { flex: 1; font-weight: 600; font-size: 16px; }
-    .chat-messages {
-      flex: 1; overflow-y: auto; padding: 20px 60px;
-      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M30 20 L30 40 M40 20 L40 40 M50 20 L50 40 M60 20 L60 40 M70 20 L70 40" stroke="%23555" stroke-width="0.5" opacity="0.03"/></svg>');
-      display: flex; flex-direction: column; gap: 2px;
-    }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 20px 60px; background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M30 20 L30 40 M40 20 L40 40 M50 20 L50 40 M60 20 L60 40 M70 20 L70 40" stroke="%23555" stroke-width="0.5" opacity="0.03"/></svg>'); display: flex; flex-direction: column; gap: 2px; }
     .message-row { display: flex; max-width: 70%; margin-bottom: 2px; position: relative; }
     .message-row.outgoing { align-self: flex-end; }
     .message-row.incoming { align-self: flex-start; }
-    .message-bubble {
-      padding: 8px 14px; border-radius: var(--radius-bubble);
-      font-size: 14px; line-height: 1.5; word-break: break-word;
-      position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-    }
+    .message-bubble { padding: 8px 14px; border-radius: var(--radius-bubble); font-size: 14px; line-height: 1.5; word-break: break-word; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
     .outgoing .message-bubble { background: var(--outgoing-bubble); border-top-right-radius: 2px; }
     .incoming .message-bubble { background: var(--incoming-bubble); border-top-left-radius: 2px; }
-    .message-meta {
-      display: flex; justify-content: flex-end; align-items: center;
-      gap: 4px; font-size: 11px; color: var(--text-secondary); margin-top: 4px;
-    }
-    .message-time { font-size: 11px; }
-    .ticks { font-size: 12px; color: var(--text-secondary); cursor: pointer; }
-    .ticks.read { color: var(--accent); }
-    .reply-preview {
-      background: rgba(0,0,0,0.1); border-left: 3px solid var(--accent);
-      padding: 4px 10px; margin-bottom: 4px; border-radius: 4px;
-      font-size: 12px; color: var(--text-secondary); cursor: pointer;
-    }
-    /* Input Area */
-    .chat-input {
-      padding: 10px 16px; background: var(--bg-panel);
-      display: flex; align-items: center; gap: 10px;
-    }
-    .chat-input textarea {
-      flex: 1; resize: none; border-radius: 24px; border: none;
-      padding: 10px 20px; background: var(--bg-main); color: var(--text-primary);
-      font-family: var(--font-family); font-size: 14px; outline: none;
-      max-height: 100px; line-height: 1.4;
-    }
-    .send-btn {
-      background: var(--accent); border: none; color: white;
-      border-radius: 50%; width: 46px; height: 46px; display: flex;
-      align-items: center; justify-content: center; cursor: pointer;
-      font-size: 20px; transition: background 0.15s;
-    }
-    .send-btn:hover { background: #009b7a; }
-    /* Modals */
-    .modal-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.7); display: flex; align-items: center;
-      justify-content: center; z-index: 1000; animation: fadeIn 0.2s;
-    }
-    .modal {
-      background: var(--bg-panel); border-radius: var(--radius-modal);
-      max-width: 500px; width: 90%; max-height: 85vh; overflow-y: auto;
-      padding: 24px; color: var(--text-primary); box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    }
-    .modal h2 { margin-bottom: 20px; font-size: 20px; }
-    .modal input, .modal textarea, .modal select {
-      width: 100%; padding: 12px; margin-bottom: 16px;
-      background: var(--bg-main); border: 1px solid var(--text-secondary);
-      border-radius: 8px; color: var(--text-primary); font-size: 14px;
-    }
-    .modal button {
-      padding: 12px 24px; background: var(--accent); border: none;
-      color: white; border-radius: 8px; cursor: pointer; font-weight: 600;
-      font-size: 14px; margin-right: 8px; transition: background 0.15s;
-    }
-    .modal button:hover { background: #009b7a; }
-    /* Context Menu */
-    .context-menu {
-      position: fixed; background: var(--bg-panel); border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 2000;
-      padding: 4px 0; min-width: 190px; display: none;
-    }
-    .context-menu-item {
-      padding: 10px 20px; cursor: pointer; font-size: 14px;
-      display: flex; align-items: center; gap: 10px; color: var(--text-primary);
-    }
+    .message-meta { display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+    .reply-preview { background: rgba(0,0,0,0.1); border-left: 3px solid var(--accent); padding: 4px 10px; margin-bottom: 4px; border-radius: 4px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+    .chat-input { padding: 10px 16px; background: var(--bg-panel); display: flex; align-items: center; gap: 10px; }
+    .chat-input textarea { flex: 1; resize: none; border-radius: 24px; border: none; padding: 10px 20px; background: var(--bg-main); color: var(--text-primary); font-family: var(--font-family); font-size: 14px; outline: none; max-height: 100px; line-height: 1.4; }
+    .send-btn { background: var(--accent); border: none; color: white; border-radius: 50%; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; }
+    .modal-overlay { position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: fadeIn 0.2s; }
+    .modal { background: var(--bg-panel); border-radius: var(--radius-modal); max-width: 500px; width: 90%; max-height: 85vh; overflow-y: auto; padding: 24px; color: var(--text-primary); }
+    .modal h2 { margin-bottom: 16px; }
+    .modal input, .modal textarea, .modal select { width: 100%; padding: 12px; margin-bottom: 16px; background: var(--bg-main); border: 1px solid var(--text-secondary); border-radius: 8px; color: var(--text-primary); font-size: 14px; }
+    .modal button { padding: 12px 24px; background: var(--accent); border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; margin-right: 8px; }
+    .context-menu { position: fixed; background: var(--bg-panel); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 2000; padding: 4px 0; min-width: 190px; display: none; }
+    .context-menu-item { padding: 10px 20px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 10px; color: var(--text-primary); }
     .context-menu-item:hover { background: rgba(255,255,255,0.08); }
-    /* Toast */
-    .toast-container {
-      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-      z-index: 3000; display: flex; flex-direction: column; align-items: center;
-    }
-    .toast {
-      background: var(--accent); color: white; padding: 12px 28px;
-      border-radius: 24px; margin-top: 8px; font-size: 14px; font-weight: 500;
-      animation: slideUp 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
+    .toast-container { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 3000; display: flex; flex-direction: column; align-items: center; }
+    .toast { background: var(--accent); color: white; padding: 12px 28px; border-radius: 24px; margin-top: 8px; font-size: 14px; font-weight: 500; animation: slideUp 0.3s ease; }
     .hidden { display: none !important; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    /* Mobile */
     @media (max-width: 768px) {
       .sidebar { width: 100% !important; max-width: 100% !important; }
       .chat-area { display: none; }
       .chat-area.mobile-open { display: flex; }
-      .chat-header .back-btn { display: block; }
       .chat-messages { padding: 10px 20px; }
     }
   </style>
@@ -316,23 +193,20 @@ FRONTEND_HTML = r"""
   <div class="modal-overlay hidden" id="global-modal"></div>
   <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
   <script>
-    // ---------- GLOBALS ----------
     const API = '/api';
     let currentUser = null, activeChannel = null, channels = [], channelMessages = new Map();
     let socket = null, replyToMessageId = null, scrollAtBottom = true;
 
     const $ = s => document.querySelector(s);
     const toast = msg => {
-      let c = $('.toast-container');
-      if(!c) { c=document.createElement('div'); c.className='toast-container'; document.body.appendChild(c); }
-      const el = document.createElement('div'); el.className='toast'; el.textContent = msg;
-      c.appendChild(el); setTimeout(() => el.remove(), 3000);
+      let c = $('.toast-container'); if(!c) { c=document.createElement('div'); c.className='toast-container'; document.body.appendChild(c); }
+      const el = document.createElement('div'); el.className='toast'; el.textContent = msg; c.appendChild(el); setTimeout(() => el.remove(), 3000);
     };
     const formatDate = d => new Date(d).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
     const formatTime = d => new Date(d).toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'});
     const formatFull = d => new Date(d).toLocaleString();
+    const escapeHtml = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
 
-    // ---------- API ----------
     async function apiFetch(url, opts={}) {
       const headers = { ...opts.headers };
       if (!(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
@@ -344,22 +218,25 @@ FRONTEND_HTML = r"""
       return res.json();
     }
 
-    // ---------- AUTH ----------
+    // Auth
     async function checkAuth() { try { currentUser = await apiFetch('/me'); } catch { currentUser = null; } }
     async function login(u, p) { await apiFetch('/login',{method:'POST',body:JSON.stringify({username:u.trim(),password:p})}); await checkAuth(); }
     async function register(u, e, p) { await apiFetch('/register',{method:'POST',body:JSON.stringify({username:u.trim(),email:e.trim(),password:p})}); await checkAuth(); }
     async function logout() { await apiFetch('/logout',{method:'POST'}); currentUser=null; activeChannel=null; channels=[]; if(socket)socket.disconnect(); }
 
-    // ---------- CHANNELS ----------
+    // Channels
     async function loadChannels() { channels = await apiFetch('/channels'); renderSidebar(); }
-    async function createChannel(type,name,members=[]) { await apiFetch('/channels',{method:'POST',body:JSON.stringify({type,name,members})}); await loadChannels(); }
+    async function createChannel(type, name, members=[]) {
+      await apiFetch('/channels',{method:'POST',body:JSON.stringify({type,name,members})});
+      await loadChannels();
+    }
     async function leaveChannel(id) { await apiFetch(`/channels/${id}/leave`,{method:'POST'}); if(activeChannel===id) activeChannel=null; await loadChannels(); }
     async function archiveChannel(id) { await apiFetch(`/channels/${id}/archive`,{method:'POST'}); await loadChannels(); }
     async function pinChannel(id) { await apiFetch(`/channels/${id}/pin`,{method:'POST'}); await loadChannels(); }
     async function addMember(chId, userId) { await apiFetch(`/channels/${chId}/members`,{method:'POST',body:JSON.stringify({user_id:userId})}); }
     async function setDisappearing(chId, ttl) { await apiFetch(`/channels/${chId}/disappearing`,{method:'POST',body:JSON.stringify({ttl})}); }
 
-    // ---------- MESSAGES ----------
+    // Messages
     async function loadMessages(chId, before=null) {
       if(!chId) return;
       const url = before ? `/channels/${chId}/messages?before=${before}` : `/channels/${chId}/messages`;
@@ -379,32 +256,34 @@ FRONTEND_HTML = r"""
     async function pinMessage(msgId) { await apiFetch(`/messages/${msgId}/pin`,{method:'POST'}); }
     async function markRead(chId) { await apiFetch(`/channels/${chId}/read`,{method:'POST'}); }
 
-    // ---------- USER PROFILE ----------
+    // Profile
     async function updateProfile(data) { await apiFetch('/profile',{method:'PUT',body:JSON.stringify(data)}); currentUser = await apiFetch('/me'); }
     async function changePassword(oldPwd, newPwd) { await apiFetch('/change-password',{method:'POST',body:JSON.stringify({old_password:oldPwd,new_password:newPwd})}); }
     async function blockUser(userId) { await apiFetch(`/block/${userId}`,{method:'POST'}); }
     async function unblockUser(userId) { await apiFetch(`/block/${userId}`,{method:'DELETE'}); }
 
-    // ---------- BOOKMARKS ----------
+    // Bookmarks
     async function addBookmark(msgId, folder='General') { await apiFetch('/bookmarks',{method:'POST',body:JSON.stringify({message_id:msgId,folder})}); }
     async function getBookmarks() { return await apiFetch('/bookmarks'); }
+    async function deleteBookmark(id) { /* not implemented on backend, but we can add later */ }
 
-    // ---------- TASKS ----------
+    // Tasks
     async function createTask(msgId, title) { await apiFetch('/tasks',{method:'POST',body:JSON.stringify({message_id:msgId,title})}); }
     async function getTasks() { return await apiFetch('/tasks'); }
+    async function toggleTask(id, isDone) { /* not implemented, would need backend route */ }
 
-    // ---------- DRAFTS ----------
+    // Drafts
     async function saveDraft(chId, content) { await apiFetch(`/channels/${chId}/draft`,{method:'POST',body:JSON.stringify({content})}); }
     async function getDraft(chId) { const d = await apiFetch(`/channels/${chId}/draft`); return d.content || ''; }
 
-    // ---------- CUSTOM STATUS ----------
+    // Custom Status
     async function setCustomStatus(content, emoji='', type='text') { await apiFetch('/status',{method:'POST',body:JSON.stringify({type,content,emoji})}); }
     async function getStatuses() { return await apiFetch('/statuses'); }
 
-    // ---------- ADMIN ----------
+    // Admin
     async function getAdminChannels() { return await apiFetch('/admin/channels'); }
 
-    // ---------- PUSHER ----------
+    // Pusher
     function initPusher() {
       if(socket) socket.disconnect();
       socket = new Pusher(""" + PUSHER_KEY + """, { cluster: """ + PUSHER_CLUSTER + """, authEndpoint: API+'/pusher/auth', encrypted: true });
@@ -426,10 +305,9 @@ FRONTEND_HTML = r"""
         const msgs = channelMessages.get(chId);
         if(msgs){ const m = msgs.find(m=>m.id===data.message_id); if(m) m.is_deleted=true; if(activeChannel===chId) renderMessages(); }
       });
-      ch.bind('typing', data => { /* typing indicator logic */ });
     }
 
-    // ---------- RENDERING ----------
+    // Rendering
     function renderAuthScreen() {
       $('#app').innerHTML = `<div class="modal-overlay" style="display:flex;"><div class="modal">
         <h2>Welcome to Chatta</h2>
@@ -454,6 +332,8 @@ FRONTEND_HTML = r"""
               <div class="user-name">${currentUser.username}</div>
               <div class="user-status">${currentUser.status_preset}</div>
             </div>
+            <button onclick="toggleTheme()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;" title="Toggle theme">🌓</button>
+            <button onclick="openNewChatModal()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:20px;" title="New chat">✚</button>
             <button id="btn-logout" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:20px;" title="Logout">⏻</button>
           </div>
           <div class="search-box">
@@ -487,6 +367,10 @@ FRONTEND_HTML = r"""
       document.getElementById('message-input').addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); $('#btn-send').click(); } });
       document.getElementById('mobile-back').addEventListener('click', () => { $('#chat-area').classList.remove('mobile-open'); });
       document.getElementById('global-search').addEventListener('keydown', e => { if(e.key==='Enter') globalSearch(e.target.value); });
+      // Load draft
+      (async () => {
+        if(activeChannel) { const draft = await getDraft(activeChannel); if(draft) $('#message-input').value = draft; }
+      })();
     }
 
     function renderSidebar() {
@@ -495,18 +379,17 @@ FRONTEND_HTML = r"""
       list.innerHTML = channels.map(ch => {
         const lastMsg = ch.last_msg || '';
         const time = ch.last_msg_time ? formatTime(ch.last_msg_time) : '';
-        return `
-          <div class="channel-item ${ch.id===activeChannel?'active':''}" data-channel="${ch.id}">
-            <img src="${ch.avatar_url || '/api/placeholder/48/48'}" class="channel-avatar" />
-            <div class="channel-info">
-              <div class="channel-name">${ch.name}</div>
-              <div class="channel-last-msg">${lastMsg}</div>
-            </div>
-            <div class="channel-meta">
-              ${time ? `<div class="channel-time">${time}</div>` : ''}
-              ${ch.unread_count ? `<div class="unread-badge">${ch.unread_count}</div>` : ''}
-            </div>
-          </div>`;
+        return `<div class="channel-item ${ch.id===activeChannel?'active':''}" data-channel="${ch.id}">
+          <img src="${ch.avatar_url || '/api/placeholder/48/48'}" class="channel-avatar" />
+          <div class="channel-info">
+            <div class="channel-name">${ch.name}</div>
+            <div class="channel-last-msg">${lastMsg}</div>
+          </div>
+          <div class="channel-meta">
+            ${time ? `<div class="channel-time">${time}</div>` : ''}
+            ${ch.unread_count ? `<div class="unread-badge">${ch.unread_count}</div>` : ''}
+          </div>
+        </div>`;
       }).join('');
       document.querySelectorAll('.channel-item').forEach(el => el.onclick = () => switchChannel(el.dataset.channel));
     }
@@ -523,6 +406,7 @@ FRONTEND_HTML = r"""
       renderSidebar();
       $('#chat-area').classList.add('mobile-open');
       scrollToBottom(true);
+      // Save draft of previous channel? We'll ignore for now.
     }
 
     function renderMessages() {
@@ -539,19 +423,15 @@ FRONTEND_HTML = r"""
         html += `<div><div class="message-bubble">${escapeHtml(m.content)}</div>`;
         html += `<div class="message-meta">
           ${m.is_edited ? '<span style="font-size:11px;">✎</span>' : ''}
-          <span class="ticks ${m.read_status==='read'?'read':''}">${m.read_status==='read'?'✓✓':(m.read_status==='delivered'?'✓✓':'✓')}</span>
-          <span class="message-time">${formatTime(m.created_at)}</span>
+          <span class="ticks" style="color:${m.read_status==='read'?'var(--accent)':'var(--text-secondary)'}">${m.read_status==='read'?'✓✓':(m.read_status==='delivered'?'✓✓':'✓')}</span>
+          <span style="font-size:11px;">${formatTime(m.created_at)}</span>
         </div></div></div>`;
       });
       $('#chat-messages').innerHTML = html;
       if(scrollAtBottom) $('#chat-messages').scrollTop = $('#chat-messages').scrollHeight;
     }
 
-    function escapeHtml(text) {
-      return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-    }
-
-    // ---------- MODALS ----------
+    // Modals
     function openModal(html) {
       const modal = $('#global-modal');
       modal.innerHTML = `<div class="modal">${html}</div>`;
@@ -560,6 +440,7 @@ FRONTEND_HTML = r"""
       modal.onclick = () => modal.classList.add('hidden');
     }
 
+    // Profile Modal
     function openProfileModal() {
       openModal(`
         <h2>Edit Profile</h2>
@@ -595,12 +476,37 @@ FRONTEND_HTML = r"""
       window.unblockUserFunc = async () => { await unblockUser(parseInt($('#block-user-id').value)); toast('Unblocked'); };
     }
 
+    // New Chat Modal
+    function openNewChatModal() {
+      openModal(`
+        <h2>New Chat</h2>
+        <select id="new-chat-type">
+          <option value="direct">Direct Message</option>
+          <option value="group">Group</option>
+          <option value="announcement">Announcement</option>
+        </select>
+        <input id="new-chat-name" placeholder="Group/Announcement name (if applicable)" />
+        <input id="new-chat-members" placeholder="User IDs separated by commas" />
+        <button onclick="createNewChat()">Create</button>
+      `);
+      window.createNewChat = async () => {
+        const type = $('#new-chat-type').value;
+        const name = $('#new-chat-name').value.trim();
+        const membersStr = $('#new-chat-members').value;
+        const members = membersStr ? membersStr.split(',').map(s => parseInt(s.trim())) : [];
+        if (type !== 'direct' && !name) { toast('Please enter a name'); return; }
+        await createChannel(type, name || 'Direct', members);
+        toast('Channel created'); $('#global-modal').classList.add('hidden');
+      };
+    }
+
+    // Channel Info Modal (manage active channel)
     function openChannelInfoModal() {
       if(!activeChannel) return;
       const ch = channels.find(c=>c.id===activeChannel);
       if(!ch) return;
       openModal(`
-        <h2>Channel: ${ch.name}</h2>
+        <h2>${ch.name}</h2>
         <p>Type: ${ch.type}</p>
         <button onclick="leaveChannel('${ch.id}')">Leave</button>
         <button onclick="archiveChannel('${ch.id}')">Archive</button>
@@ -619,43 +525,48 @@ FRONTEND_HTML = r"""
       `);
     }
 
+    // Pinned Messages Modal
     async function openPinnedMessages() {
       if(!activeChannel) return;
-      // In a real app you'd fetch pinned messages; for now we show all pins from current channel messages
+      // For now, just show recent messages as pinned placeholder (backend pinning works, we can filter by pinned flag)
       const msgs = channelMessages.get(activeChannel)||[];
-      // Assuming each message may have a pinned flag (not yet stored on message object, but we can show all)
-      let html = msgs.slice(0,5).map(m => `<div style="padding:8px;border-bottom:1px solid #333;cursor:pointer;" onclick="switchToMsg('${m.id}')">📌 ${m.content.substring(0,50)}</div>`).join('');
+      const pinned = msgs.filter(m => m.pinned); // if we had pinned flag
+      let html = (pinned.length ? pinned : msgs.slice(0,5)).map(m => `<div style="padding:8px;border-bottom:1px solid #333;cursor:pointer;" onclick="switchToMsg('${m.id}')">📌 ${escapeHtml(m.content.substring(0,50))}</div>`).join('');
       openModal(`<h2>Pinned Messages</h2>${html||'No pinned messages'}`);
-      window.switchToMsg = (msgId) => {
-        // Just scroll to message in current chat
-        scrollToMessage(msgId);
-        $('#global-modal').classList.add('hidden');
-      };
+      window.switchToMsg = (msgId) => { scrollToMessage(msgId); $('#global-modal').classList.add('hidden'); };
     }
 
+    // Bookmarks Modal
     async function openBookmarksModal() {
       const bm = await getBookmarks();
-      let html = bm.map(b => `
-        <div style="padding:10px;border-bottom:1px solid #333;cursor:pointer;" onclick="jumpToBookmark('${b.message_id}')">
-          <strong>${b.folder}</strong>: ${b.content?.substring(0,60)} <span style="color:var(--text-secondary);font-size:12px;">${formatFull(b.created_at)}</span>
-        </div>`).join('');
+      let html = bm.map(b => `<div style="padding:10px;border-bottom:1px solid #333;display:flex;justify-content:space-between;">
+        <div onclick="jumpToBookmark('${b.message_id}')" style="cursor:pointer;flex:1;">
+          <strong>${b.folder}</strong>: ${escapeHtml(b.content?.substring(0,60))} <span style="color:var(--text-secondary);font-size:12px;">${formatFull(b.created_at)}</span>
+        </div>
+        <button onclick="deleteBookmark(${b.id})" style="background:var(--red);border:none;color:white;border-radius:4px;padding:4px 8px;">✕</button>
+      </div>`).join('');
       openModal(`<h2>Bookmarks</h2>${html||'No bookmarks yet'}`);
       window.jumpToBookmark = (msgId) => {
         const entry = bm.find(b=>b.message_id===msgId);
-        if(entry?.channel_id) {
-          switchChannel(entry.channel_id);
-          setTimeout(() => scrollToMessage(msgId), 500);
-        }
+        if(entry?.channel_id) { switchChannel(entry.channel_id); setTimeout(() => scrollToMessage(msgId), 500); }
         $('#global-modal').classList.add('hidden');
       };
+      window.deleteBookmark = async (id) => { /* call delete endpoint if available */ toast('Delete not yet implemented'); };
     }
 
+    // Tasks Modal
     async function openTasksModal() {
       const tasks = await getTasks();
-      let html = tasks.map(t => `<div style="padding:8px;border-bottom:1px solid #333;">${t.is_done?'✅':'⬜'} ${t.title} ${t.due_date?`(due: ${t.due_date})`:''}</div>`).join('');
+      let html = tasks.map(t => `<div style="padding:8px;border-bottom:1px solid #333;display:flex;justify-content:space-between;">
+        <span onclick="toggleTaskCompletion(${t.id})" style="cursor:pointer;">${t.is_done?'✅':'⬜'} ${t.title} ${t.due_date?`(due: ${t.due_date})`:''}</span>
+        <button onclick="deleteTask(${t.id})" style="background:var(--red);border:none;color:white;border-radius:4px;padding:4px 8px;">✕</button>
+      </div>`).join('');
       openModal(`<h2>Tasks</h2>${html||'No tasks'}`);
+      window.toggleTaskCompletion = async (id) => { /* need backend route */ toast('Toggle not yet implemented'); };
+      window.deleteTask = async (id) => { /* need backend route */ toast('Delete not yet implemented'); };
     }
 
+    // Statuses Modal
     async function openStatusesModal() {
       const statuses = await getStatuses();
       let html = statuses.map(s => `<div style="padding:8px;border-bottom:1px solid #333;"><strong>${s.username}</strong>: ${s.emoji} ${s.content}</div>`).join('');
@@ -664,20 +575,22 @@ FRONTEND_HTML = r"""
       `);
     }
 
+    // Admin Panel
     async function openAdminPanel() {
       if(currentUser.role !== 'admin') return;
       const chs = await getAdminChannels();
-      let html = chs.map(ch => `
-        <div style="padding:6px;border-bottom:1px solid #333;">
-          ${ch.name} (${ch.type})
+      let html = chs.map(ch => `<div style="padding:6px;border-bottom:1px solid #333;display:flex;justify-content:space-between;">
+        ${ch.name} (${ch.type})
+        <div>
           <button onclick="archiveChannel('${ch.id}')">Archive</button>
           <button onclick="forceJoin('${ch.id}')">Join</button>
-        </div>`).join('');
+        </div>
+      </div>`).join('');
       openModal(`<h2>Admin Panel</h2>${html}`);
       window.forceJoin = async (chId) => { await apiFetch(`/channels/${chId}/members`,{method:'POST',body:JSON.stringify({user_id:currentUser.id})}); toast('Joined'); };
     }
 
-    // ---------- CONTEXT MENU ----------
+    // Context Menu (right-click on message)
     window.showContextMenu = (e, msgId) => {
       e.preventDefault();
       const menu = $('#context-menu');
@@ -697,21 +610,17 @@ FRONTEND_HTML = r"""
       menu.style.top = Math.min(e.clientY, window.innerHeight-250) + 'px';
       document.addEventListener('click', () => menu.style.display = 'none', {once:true});
     };
-    window.replyToMsg = (id) => { replyToMessageId = id; toast('Reply mode activated'); };
+    window.replyToMsg = (id) => { replyToMessageId = id; toast('Reply mode'); };
     window.editMsg = async (id) => {
       const msgs = channelMessages.get(activeChannel);
       const msg = msgs.find(m=>m.id===id);
-      if(msg) {
-        const newText = prompt('Edit message:', msg.content);
-        if(newText) await editMessage(id, newText);
-      }
+      if(msg) { const newText = prompt('Edit message:', msg.content); if(newText) await editMessage(id, newText); }
     };
     window.deleteMsg = async (id) => { await deleteMessage(id); };
     window.copyMsg = async (id) => {
       const msgs = channelMessages.get(activeChannel);
       const msg = msgs.find(m=>m.id===id);
-      if(msg) await navigator.clipboard.writeText(msg.content);
-      toast('Copied');
+      if(msg) { await navigator.clipboard.writeText(msg.content); toast('Copied'); }
     };
     window.pinMsg = async (id) => { await pinMessage(id); toast('Pinned'); };
     window.reactMsg = async (id) => { const emoji = prompt('Enter emoji:'); if(emoji) await reactToMessage(id, emoji); };
@@ -719,7 +628,11 @@ FRONTEND_HTML = r"""
     window.bookmarkMsg = async (id) => { const folder = prompt('Folder (default General):')||'General'; await addBookmark(id, folder); toast('Bookmarked'); };
     window.tagMsg = async (id) => { const tag = prompt('Tag name:'); if(tag) await apiFetch(`/messages/${id}/tag`,{method:'POST',body:JSON.stringify({tag})}); toast('Tagged'); };
 
-    // ---------- HELPERS ----------
+    function toggleTheme() {
+      const html = document.documentElement;
+      const current = html.getAttribute('data-theme');
+      html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+    }
     function scrollToBottom(smooth) {
       const el = $('#chat-messages');
       el.scrollTo({ top: el.scrollHeight, behavior: smooth?'smooth':'auto' });
@@ -732,12 +645,11 @@ FRONTEND_HTML = r"""
     async function globalSearch(query) {
       if(!query) return;
       const results = await apiFetch(`/search?q=${encodeURIComponent(query)}`);
-      // Simple: just show results in a modal
-      let html = results.map(r => `<div style="padding:6px;border-bottom:1px solid #333;">${r.username}: ${r.content.substring(0,60)}</div>`).join('');
+      let html = results.map(r => `<div style="padding:6px;border-bottom:1px solid #333;">${r.username}: ${escapeHtml(r.content.substring(0,60))}</div>`).join('');
       openModal(`<h2>Search Results</h2>${html||'None'}`);
     }
 
-    // ---------- INIT ----------
+    // Initialization
     async function initApp() {
       await checkAuth();
       if(!currentUser) renderAuthScreen();
@@ -745,11 +657,6 @@ FRONTEND_HTML = r"""
         renderMainUI();
         await loadChannels();
         initPusher();
-        // Load draft if any
-        if(activeChannel) {
-          const draft = await getDraft(activeChannel);
-          if(draft) $('#message-input').value = draft;
-        }
       }
     }
     window.onload = initApp;
@@ -831,7 +738,8 @@ async def unblock_user(user_id: int, user=Depends(get_current_user)):
 async def get_channels(user=Depends(get_current_user)):
     rows = await db_execute("""
         SELECT c.*, cm.unread_count, cm.starred,
-            (SELECT content FROM messages WHERE channel_id=c.id AND is_deleted=0 ORDER BY created_at DESC LIMIT 1) as last_msg
+            (SELECT content FROM messages WHERE channel_id=c.id AND is_deleted=0 ORDER BY created_at DESC LIMIT 1) as last_msg,
+            (SELECT created_at FROM messages WHERE channel_id=c.id AND is_deleted=0 ORDER BY created_at DESC LIMIT 1) as last_msg_time
         FROM channels c JOIN channel_members cm ON c.id=cm.channel_id
         WHERE cm.user_id=? AND c.is_archived=0 ORDER BY last_msg DESC
     """, [user["id"]])
@@ -839,6 +747,7 @@ async def get_channels(user=Depends(get_current_user)):
         if r["type"] == "direct":
             other = await db_execute("SELECT u.username, u.avatar_url FROM channel_members cm JOIN users u ON cm.user_id=u.id WHERE cm.channel_id=? AND cm.user_id!=? LIMIT 1", [r["id"], user["id"]])
             if other: r["name"] = other[0]["username"]; r["avatar_url"] = other[0]["avatar_url"]
+        if r.get("last_msg_time"): r["last_msg_time"] = str(r["last_msg_time"])
     return rows
 
 @app.post("/api/channels")
