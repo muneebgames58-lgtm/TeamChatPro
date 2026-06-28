@@ -104,8 +104,9 @@ def group_reactions(rows):
         groups[e]["users"].append({"user_id": r["user_id"], "username": r.get("username","")})
     return list(groups.values())
 
-# ---------- Embedded Frontend (Full Featured) ----------
-FRONTEND_HTML = r"""
+# ---------- Embedded Frontend (Full Featured, with safe placeholders) ----------
+# In the JavaScript we use __PUSHER_KEY__ and __PUSHER_CLUSTER__ which will be replaced
+FRONTEND_HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -265,12 +266,10 @@ FRONTEND_HTML = r"""
     // Bookmarks
     async function addBookmark(msgId, folder='General') { await apiFetch('/bookmarks',{method:'POST',body:JSON.stringify({message_id:msgId,folder})}); }
     async function getBookmarks() { return await apiFetch('/bookmarks'); }
-    async function deleteBookmark(id) { /* not implemented on backend, but we can add later */ }
 
     // Tasks
     async function createTask(msgId, title) { await apiFetch('/tasks',{method:'POST',body:JSON.stringify({message_id:msgId,title})}); }
     async function getTasks() { return await apiFetch('/tasks'); }
-    async function toggleTask(id, isDone) { /* not implemented, would need backend route */ }
 
     // Drafts
     async function saveDraft(chId, content) { await apiFetch(`/channels/${chId}/draft`,{method:'POST',body:JSON.stringify({content})}); }
@@ -286,7 +285,7 @@ FRONTEND_HTML = r"""
     // Pusher
     function initPusher() {
       if(socket) socket.disconnect();
-      socket = new Pusher(""" + PUSHER_KEY + """, { cluster: """ + PUSHER_CLUSTER + """, authEndpoint: API+'/pusher/auth', encrypted: true });
+      socket = new Pusher("__PUSHER_KEY__", { cluster: "__PUSHER_CLUSTER__", authEndpoint: API+'/pusher/auth', encrypted: true });
       socket.connection.bind('connected', ()=>{ if(activeChannel) subscribeToChannel(activeChannel); });
     }
     function subscribeToChannel(chId) {
@@ -367,7 +366,6 @@ FRONTEND_HTML = r"""
       document.getElementById('message-input').addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); $('#btn-send').click(); } });
       document.getElementById('mobile-back').addEventListener('click', () => { $('#chat-area').classList.remove('mobile-open'); });
       document.getElementById('global-search').addEventListener('keydown', e => { if(e.key==='Enter') globalSearch(e.target.value); });
-      // Load draft
       (async () => {
         if(activeChannel) { const draft = await getDraft(activeChannel); if(draft) $('#message-input').value = draft; }
       })();
@@ -406,7 +404,6 @@ FRONTEND_HTML = r"""
       renderSidebar();
       $('#chat-area').classList.add('mobile-open');
       scrollToBottom(true);
-      // Save draft of previous channel? We'll ignore for now.
     }
 
     function renderMessages() {
@@ -500,7 +497,7 @@ FRONTEND_HTML = r"""
       };
     }
 
-    // Channel Info Modal (manage active channel)
+    // Channel Info Modal
     function openChannelInfoModal() {
       if(!activeChannel) return;
       const ch = channels.find(c=>c.id===activeChannel);
@@ -528,7 +525,6 @@ FRONTEND_HTML = r"""
     // Pinned Messages Modal
     async function openPinnedMessages() {
       if(!activeChannel) return;
-      // For now, just show recent messages as pinned placeholder (backend pinning works, we can filter by pinned flag)
       const msgs = channelMessages.get(activeChannel)||[];
       const pinned = msgs.filter(m => m.pinned); // if we had pinned flag
       let html = (pinned.length ? pinned : msgs.slice(0,5)).map(m => `<div style="padding:8px;border-bottom:1px solid #333;cursor:pointer;" onclick="switchToMsg('${m.id}')">📌 ${escapeHtml(m.content.substring(0,50))}</div>`).join('');
@@ -562,8 +558,8 @@ FRONTEND_HTML = r"""
         <button onclick="deleteTask(${t.id})" style="background:var(--red);border:none;color:white;border-radius:4px;padding:4px 8px;">✕</button>
       </div>`).join('');
       openModal(`<h2>Tasks</h2>${html||'No tasks'}`);
-      window.toggleTaskCompletion = async (id) => { /* need backend route */ toast('Toggle not yet implemented'); };
-      window.deleteTask = async (id) => { /* need backend route */ toast('Delete not yet implemented'); };
+      window.toggleTaskCompletion = async (id) => { toast('Toggle not yet implemented'); };
+      window.deleteTask = async (id) => { toast('Delete not yet implemented'); };
     }
 
     // Statuses Modal
@@ -668,7 +664,9 @@ FRONTEND_HTML = r"""
 # ---------- Root route ----------
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return HTMLResponse(content=FRONTEND_HTML)
+    # Inject actual Pusher keys into the template
+    html = FRONTEND_HTML_TEMPLATE.replace("__PUSHER_KEY__", PUSHER_KEY).replace("__PUSHER_CLUSTER__", PUSHER_CLUSTER)
+    return HTMLResponse(content=html)
 
 # ---------- Health check ----------
 @app.get("/api/health")
