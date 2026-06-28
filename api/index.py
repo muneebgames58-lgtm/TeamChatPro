@@ -1,15 +1,18 @@
 from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form, Response
 from fastapi.responses import JSONResponse
 from jose import jwt, JWTError
-import datetime, os, uuid, base64, json
+import datetime, os, uuid, base64, json, logging
 import httpx
 import pusher
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
 # ---------- Environment Validation ----------
 REQUIRED_ENV = [
-    "TURSO_DATABASE_URL",   # e.g. https://your-db-name.turso.io
+    "TURSO_DATABASE_URL",   # e.g. https://your-db-org.tur.so
     "TURSO_AUTH_TOKEN",
     "PUSHER_APP_ID", "PUSHER_KEY", "PUSHER_SECRET", "PUSHER_CLUSTER",
     "JWT_SECRET"
@@ -19,7 +22,7 @@ if missing:
     raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
 
 # ---------- Config ----------
-TURSO_URL = os.environ["TURSO_DATABASE_URL"]
+TURSO_URL = os.environ["TURSO_DATABASE_URL"].rstrip("/")
 TURSO_TOKEN = os.environ["TURSO_AUTH_TOKEN"]
 PUSHER_APP_ID = os.environ["PUSHER_APP_ID"]
 PUSHER_KEY = os.environ["PUSHER_KEY"]
@@ -31,13 +34,13 @@ pusher_client = pusher.Pusher(app_id=PUSHER_APP_ID, key=PUSHER_KEY, secret=PUSHE
 
 # ---------- Turso HTTP Helpers ----------
 async def turso_request(sql: str, params: list = None):
-    """Execute SQL via Turso HTTP API (pipeline endpoint)."""
+    """Execute SQL via Turso HTTP pipeline API."""
     url = f"{TURSO_URL}/v2/pipeline"
     headers = {
         "Authorization": f"Bearer {TURSO_TOKEN}",
         "Content-Type": "application/json"
     }
-    # Build request body
+    # Build pipeline request body according to Turso docs
     body = {
         "requests": [
             {
@@ -50,16 +53,19 @@ async def turso_request(sql: str, params: list = None):
             {"type": "close"}
         ]
     }
+    logger.info(f"Turso request: {sql[:100]}...")
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=30.0)
-        if resp.status_code != 200:
-            raise HTTPException(500, f"Database error: {resp.text}")
-        data = resp.json()
-        # Parse results
-        results = data.get("results", [])
-        if results and results[0].get("type") == "execute":
-            return _parse_execute_result(results[0])
-        return None
+        try:
+            resp = await client.post(url, headers=headers, json=body, timeout=30.0)
+            if resp.status_code != 200:
+                raise HTTPException(500, f"Database error: {resp.status_code} {resp.text}")
+            data = resp.json()
+            results = data.get("results", [])
+            if results and results[0].get("type") == "execute":
+                return _parse_execute_result(results[0])
+            return {"rows": [], "rows_affected": 0}
+        except httpx.RequestError as e:
+            raise HTTPException(500, f"Database connection failed: {str(e)}")
 
 def _infer_type(value):
     if isinstance(value, int): return "integer"
@@ -68,24 +74,26 @@ def _infer_type(value):
     return "text"
 
 def _parse_execute_result(execute_result):
-    """Convert Turso HTTP execute result to a list of dicts (rows)."""
+    """Convert Turso HTTP execute result to list of dicts."""
     result = execute_result.get("response", {}).get("result", {})
     if not result:
         return {"rows": [], "rows_affected": 0}
     cols = [c["name"] for c in result.get("cols", [])]
     rows = []
     for row in result.get("rows", []):
-        # Each row is a list of values
-        vals = [v.get("value") if isinstance(v, dict) else v for v in row]
+        vals = []
+        for v in row:
+            if isinstance(v, dict):
+                vals.append(v.get("value"))
+            else:
+                vals.append(v)
         rows.append(dict(zip(cols, vals)))
     return {"rows": rows, "rows_affected": result.get("rows_affected", 0)}
 
-# Helper to run and return rows only
 async def db_execute(sql: str, params: list = None) -> list:
     res = await turso_request(sql, params)
     return res.get("rows", [])
 
-# Helper for simple execution (no rows)
 async def db_run(sql: str, params: list = None) -> dict:
     return await turso_request(sql, params)
 
@@ -126,18 +134,16 @@ def group_reactions(rows):
 # ---------- Public Config ----------
 @app.get("/api/config")
 async def config():
-    return {
-        "pusher_key": PUSHER_KEY,
-        "pusher_cluster": PUSHER_CLUSTER
-    }
+    return {"pusher_key": PUSHER_KEY, "pusher_cluster": PUSHER_CLUSTER}
 
 # ---------- Health Check ----------
 @app.get("/api/health")
 async def health():
     try:
         await db_execute("SELECT 1")
-        return {"status": "ok", "database": "connected via HTTP"}
+        return {"status": "ok", "database": "connected"}
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 # ---------- Auth Routes ----------
@@ -186,7 +192,7 @@ async def change_password(data: dict, user=Depends(get_current_user)):
     return {"ok": True}
 
 @app.post("/api/block/{user_id}")
-async def block_user(user_id: int, user=Depends(get_current_user)):
+async def block_user(user_id: int, user=Depends(get_current_user):
     await db_run("INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)", [user["id"], user_id])
     return {"ok": True}
 
