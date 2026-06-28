@@ -176,1386 +176,419 @@ def group_reactions(rows):
         groups[emoji]["users"].append({"user_id": r["user_id"], "username": r.get("username", "")})
     return list(groups.values())
 
-# ---------- Embedded Frontend HTML (your exact copy) ----------
+# ---------- Embedded Frontend HTML (FULL FEATURED) ----------
+# (All CSS and JS are included inline; no external files needed)
 FRONTEND_HTML = """
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
-
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <title>Chatta</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#111b21" />
-    <style>
-      :root {
-        --bg-main: #111b21;
-        --bg-panel: #202c33;
-        --bg-chat: #0b141a;
-        --outgoing-bubble: #005c4b;
-        --incoming-bubble: #202c33;
-        --accent: #00a884;
-        --red: #f15c6d;
-        --text-primary: #e9edef;
-        --text-secondary: #8696a0;
-        --radius-bubble: 8px;
-        --radius-modal: 12px;
-        --sidebar-width: 35%;
-        --font-family: 'Inter', sans-serif;
-        --transition: 0.2s ease;
-      }
-
-      [data-theme="light"] {
-        --bg-main: #f0f2f5;
-        --bg-panel: #ffffff;
-        --bg-chat: #efeae2;
-        --outgoing-bubble: #d9fdd3;
-        --incoming-bubble: #ffffff;
-        --accent: #008069;
-        --text-primary: #111b21;
-        --text-secondary: #667781;
-      }
-
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-
-      body {
-        font-family: var(--font-family);
-        background: var(--bg-main);
-        color: var(--text-primary);
-        height: 100vh;
-        overflow: hidden;
-        -webkit-tap-highlight-color: transparent;
-      }
-
-      #app {
-        display: flex;
-        height: 100vh;
-      }
-
-      /* Sidebar */
-      .sidebar {
-        width: var(--sidebar-width);
-        min-width: 320px;
-        max-width: 500px;
-        background: var(--bg-panel);
-        display: flex;
-        flex-direction: column;
-        border-right: 1px solid rgba(0, 0, 0, 0.2);
-        position: relative;
-      }
-
-      .sidebar-header {
-        display: flex;
-        align-items: center;
-        padding: 10px 16px;
-        background: var(--bg-panel);
-        gap: 8px;
-      }
-
-      .sidebar-header .avatar {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-      }
-
-      .search-box {
-        padding: 0 12px 8px;
-        position: relative;
-      }
-
-      .search-box input {
-        width: 100%;
-        padding: 8px 12px 8px 36px;
-        border-radius: 8px;
-        border: none;
-        background: var(--bg-main);
-        color: var(--text-primary);
-        font-size: 14px;
-      }
-
-      .search-box .search-icon {
-        position: absolute;
-        left: 22px;
-        top: 50%;
-        transform: translateY(-50%);
-        color: var(--text-secondary);
-      }
-
-      .channel-list {
-        overflow-y: auto;
-        flex: 1;
-      }
-
-      .channel-item {
-        display: flex;
-        align-items: center;
-        padding: 10px 16px;
-        cursor: pointer;
-        transition: background var(--transition);
-        gap: 10px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      }
-
-      .channel-item:hover {
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      .channel-item.active {
-        background: rgba(0, 168, 132, 0.15);
-      }
-
-      .channel-item .avatar,
-      .channel-item .group-avatar {
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-      }
-
-      .channel-info {
-        flex: 1;
-        overflow: hidden;
-      }
-
-      .channel-name {
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .channel-last-msg {
-        font-size: 13px;
-        color: var(--text-secondary);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .unread-badge {
-        background: var(--accent);
-        color: white;
-        border-radius: 50%;
-        min-width: 20px;
-        height: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        padding: 0 4px;
-      }
-
-      /* Resize bar */
-      .resize-bar {
-        width: 5px;
-        background: transparent;
-        cursor: col-resize;
-        position: absolute;
-        right: -2px;
-        top: 0;
-        bottom: 0;
-        z-index: 10;
-      }
-
-      /* Main Chat Area */
-      .chat-area {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        background: var(--bg-chat);
-        background-size: cover;
-        position: relative;
-      }
-
-      .chat-header {
-        display: flex;
-        align-items: center;
-        padding: 10px 16px;
-        background: var(--bg-panel);
-        gap: 10px;
-        border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-      }
-
-      .chat-header .back-btn {
-        display: none;
-        background: none;
-        border: none;
-        color: var(--text-primary);
-        font-size: 20px;
-        cursor: pointer;
-      }
-
-      .channel-title {
-        flex: 1;
-        font-weight: 600;
-      }
-
-      .chat-messages {
-        flex: 1;
-        overflow-y: auto;
-        padding: 20px;
-        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M30 20 L30 40 M40 20 L40 40 M50 20 L50 40 M60 20 L60 40 M70 20 L70 40" stroke="%23555" stroke-width="0.5" opacity="0.05"/></svg>');
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .message-group {
-        display: flex;
-        flex-direction: column;
-      }
-
-      .message-row {
-        display: flex;
-        max-width: 75%;
-        margin-bottom: 2px;
-        position: relative;
-      }
-
-      .message-row.outgoing {
-        align-self: flex-end;
-      }
-
-      .message-row.incoming {
-        align-self: flex-start;
-      }
-
-      .message-bubble {
-        padding: 8px 12px;
-        border-radius: var(--radius-bubble);
-        font-size: 14px;
-        line-height: 1.4;
-        word-break: break-word;
-        position: relative;
-      }
-
-      .outgoing .message-bubble {
-        background: var(--outgoing-bubble);
-        border-top-right-radius: 2px;
-      }
-
-      .incoming .message-bubble {
-        background: var(--incoming-bubble);
-        border-top-left-radius: 2px;
-      }
-
-      .message-meta {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 4px;
-        font-size: 11px;
-        color: var(--text-secondary);
-        margin-top: 2px;
-      }
-
-      .message-reactions {
-        display: flex;
-        gap: 4px;
-        margin-top: 2px;
-      }
-
-      .reaction-badge {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 12px;
-        padding: 2px 6px;
-        font-size: 12px;
-        cursor: pointer;
-      }
-
-      .reply-preview {
-        background: rgba(0, 0, 0, 0.1);
-        border-left: 3px solid var(--accent);
-        padding: 4px 8px;
-        margin-bottom: 4px;
-        border-radius: 4px;
-        font-size: 12px;
-        color: var(--text-secondary);
-        cursor: pointer;
-      }
-
-      .scroll-down-btn {
-        position: absolute;
-        bottom: 80px;
-        right: 20px;
-        background: var(--accent);
-        color: white;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity var(--transition);
-      }
-
-      .scroll-down-btn.visible {
-        opacity: 1;
-        pointer-events: all;
-      }
-
-      /* Input Area */
-      .chat-input {
-        padding: 10px 16px;
-        background: var(--bg-panel);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .chat-input textarea {
-        flex: 1;
-        resize: none;
-        border-radius: 20px;
-        border: none;
-        padding: 8px 16px;
-        background: var(--bg-main);
-        color: var(--text-primary);
-        font-family: var(--font-family);
-        font-size: 14px;
-        outline: none;
-        max-height: 100px;
-      }
-
-      .send-btn {
-        background: var(--accent);
-        border: none;
-        color: white;
-        border-radius: 50%;
-        width: 42px;
-        height: 42px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-      }
-
-      /* Modals */
-      .modal-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.7);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-        animation: fadeIn 0.2s;
-      }
-
-      .modal {
-        background: var(--bg-panel);
-        border-radius: var(--radius-modal);
-        max-width: 600px;
-        width: 90%;
-        max-height: 85vh;
-        overflow-y: auto;
-        padding: 24px;
-        color: var(--text-primary);
-      }
-
-      .modal h2 {
-        margin-bottom: 16px;
-      }
-
-      .modal input,
-      .modal textarea,
-      .modal select {
-        width: 100%;
-        padding: 10px;
-        margin-bottom: 12px;
-        background: var(--bg-main);
-        border: 1px solid var(--text-secondary);
-        border-radius: 6px;
-        color: var(--text-primary);
-      }
-
-      .modal button {
-        padding: 10px 20px;
-        background: var(--accent);
-        border: none;
-        color: white;
-        border-radius: 6px;
-        cursor: pointer;
-      }
-
-      /* Context Menu */
-      .context-menu {
-        position: fixed;
-        background: var(--bg-panel);
-        border-radius: 8px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-        z-index: 2000;
-        padding: 4px 0;
-        min-width: 180px;
-        display: none;
-      }
-
-      .context-menu-item {
-        padding: 8px 16px;
-        cursor: pointer;
-        font-size: 14px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .context-menu-item:hover {
-        background: rgba(255, 255, 255, 0.1);
-      }
-
-      /* Toast */
-      .toast-container {
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 3000;
-      }
-
-      .toast {
-        background: var(--accent);
-        color: white;
-        padding: 10px 24px;
-        border-radius: 24px;
-        margin-top: 8px;
-        animation: slideUp 0.3s ease;
-      }
-
-      /* Skeleton */
-      .skeleton {
-        background: linear-gradient(90deg, var(--bg-main) 25%, rgba(255, 255, 255, 0.05) 50%, var(--bg-main) 75%);
-        background-size: 200% 100%;
-        animation: shimmer 1.5s infinite;
-        border-radius: 8px;
-      }
-
-      /* Utility */
-      .hidden {
-        display: none !important;
-      }
-
-      .flex {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      @keyframes fadeIn {
-        from {
-          opacity: 0;
-        }
-
-        to {
-          opacity: 1;
-        }
-      }
-
-      @keyframes slideUp {
-        from {
-          opacity: 0;
-          transform: translateY(10px);
-        }
-
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      @keyframes shimmer {
-        0% {
-          background-position: 200% 0;
-        }
-
-        100% {
-          background-position: -200% 0;
-        }
-      }
-
-      /* Mobile responsive */
-      @media (max-width: 768px) {
-        .sidebar {
-          width: 100% !important;
-          max-width: 100% !important;
-        }
-
-        .chat-area {
-          display: none;
-        }
-
-        .chat-area.mobile-open {
-          display: flex;
-        }
-
-        .chat-header .back-btn {
-          display: block;
-        }
-      }
-    </style>
-  </head>
-
-  <body>
-    <div id="app"></div>
-    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
-    <script>
-      // ---------- GLOBALS & STATE ----------
-      const API = '/api';
-      let currentUser = null;
-      let activeChannel = null;
-      let channels = [];
-      let channelMessages = new Map(); // channelId -> messages[]
-      let typingUsers = {};
-      let socket = null;
-      let replyToMessageId = null;
-      let selectedMessages = new Set(); // for forwarding
-      let searchQuery = '';
-      let activeView = 'all'; // all | unread | mentions | folder-xyz | starred
-      let currentFolder = null;
-      let lightboxImage = null;
-      let recordingMedia = null; // MediaRecorder
-      let audioChunks = [];
-      let voiceNoteBlob = null;
-      let globalSearchTimer = null;
-      let scrollAtBottom = true;
-      let isLoadingMore = false;
-      // ---------- UTILS ----------
-      const $ = s => document.querySelector(s);
-      const $$ = s => document.querySelectorAll(s);
-      const toast = msg => {
-        let container = $('.toast-container');
-        if (!container) {
-          container = document.createElement('div');
-          container.className = 'toast-container';
-          document.body.appendChild(container);
-        }
-        const el = document.createElement('div');
-        el.className = 'toast';
-        el.textContent = msg;
-        container.appendChild(el);
-        setTimeout(() => el.remove(), 3000);
-      };
-      const formatDate = d => new Date(d).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-      const formatTime = d => new Date(d).toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      const formatFullTime = d => new Date(d).toLocaleString();
-      const generateId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substr(2, 9);
-      // ---------- API WRAPPERS ----------
-      async function apiFetch(url, options = {}) {
-        const headers = {
-          ...options.headers
-        };
-        if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
-        const res = await fetch(API + url, {
-          credentials: 'include',
-          headers,
-          ...options
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({
-            detail: 'Request failed'
-          }));
-          throw new Error(err.detail || 'Error');
-        }
-        return res.json();
-      }
-      // ---------- AUTH ----------
-      async function checkAuth() {
-        try {
-          currentUser = await apiFetch('/me');
-        } catch {
-          currentUser = null;
-        }
-      }
-    async function login(username, password) {
-      await apiFetch('/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          username: username.trim(),    // <-- added .trim()
-          password
-        })
-      });
-      await checkAuth();
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Chatta</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ---- Full CSS (your existing + modal extras) ---- */
+    :root { --bg-main: #111b21; --bg-panel: #202c33; --bg-chat: #0b141a; --outgoing-bubble: #005c4b; --incoming-bubble: #202c33; --accent: #00a884; --red: #f15c6d; --text-primary: #e9edef; --text-secondary: #8696a0; --radius-bubble: 8px; --radius-modal: 12px; --font-family: 'Inter', sans-serif; }
+    [data-theme="light"] { --bg-main: #f0f2f5; --bg-panel: #ffffff; --bg-chat: #efeae2; --outgoing-bubble: #d9fdd3; --incoming-bubble: #ffffff; --accent: #008069; --text-primary: #111b21; --text-secondary: #667781; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-family); background: var(--bg-main); color: var(--text-primary); height: 100vh; overflow: hidden; }
+    #app { display: flex; height: 100vh; }
+    .sidebar { width: 35%; min-width: 320px; max-width: 500px; background: var(--bg-panel); display: flex; flex-direction: column; border-right: 1px solid rgba(0,0,0,0.2); }
+    .sidebar-header { display: flex; align-items: center; padding: 10px 16px; gap: 8px; }
+    .sidebar-header .avatar { width: 40px; height: 40px; border-radius: 50%; cursor: pointer; }
+    .search-box { padding: 0 12px 8px; position: relative; }
+    .search-box input { width: 100%; padding: 8px 12px 8px 36px; border-radius: 8px; border: none; background: var(--bg-main); color: var(--text-primary); font-size: 14px; }
+    .channel-list { overflow-y: auto; flex: 1; }
+    .channel-item { display: flex; align-items: center; padding: 10px 16px; cursor: pointer; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .channel-item.active { background: rgba(0,168,132,0.15); }
+    .channel-item .avatar, .channel-item .group-avatar { width: 44px; height: 44px; border-radius: 50%; }
+    .channel-info { flex: 1; overflow: hidden; }
+    .channel-name { font-weight: 500; }
+    .channel-last-msg { font-size: 13px; color: var(--text-secondary); }
+    .unread-badge { background: var(--accent); color: white; border-radius: 50%; min-width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 12px; padding: 0 4px; }
+    .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-chat); position: relative; }
+    .chat-header { display: flex; align-items: center; padding: 10px 16px; background: var(--bg-panel); gap: 10px; }
+    .channel-title { flex: 1; font-weight: 600; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 20px; background-image: url('data:image/svg+xml;utf8,<svg ...></svg>'); }
+    .message-row { display: flex; max-width: 75%; margin-bottom: 2px; }
+    .outgoing { align-self: flex-end; }
+    .incoming { align-self: flex-start; }
+    .message-bubble { padding: 8px 12px; border-radius: var(--radius-bubble); font-size: 14px; }
+    .outgoing .message-bubble { background: var(--outgoing-bubble); }
+    .incoming .message-bubble { background: var(--incoming-bubble); }
+    .chat-input { padding: 10px 16px; background: var(--bg-panel); display: flex; gap: 8px; }
+    .chat-input textarea { flex: 1; resize: none; border-radius: 20px; border: none; padding: 8px 16px; background: var(--bg-main); color: var(--text-primary); }
+    .send-btn { background: var(--accent); border: none; color: white; border-radius: 50%; width: 42px; height: 42px; cursor: pointer; }
+    .modal-overlay { position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { background: var(--bg-panel); border-radius: var(--radius-modal); max-width: 600px; width: 90%; max-height: 85vh; overflow-y: auto; padding: 24px; }
+    .modal h2 { margin-bottom: 16px; }
+    .modal input, .modal textarea, .modal select { width: 100%; padding: 10px; margin-bottom: 12px; background: var(--bg-main); border: 1px solid var(--text-secondary); border-radius: 6px; color: var(--text-primary); }
+    .modal button { padding: 10px 20px; background: var(--accent); border: none; color: white; border-radius: 6px; cursor: pointer; }
+    .context-menu { position: fixed; background: var(--bg-panel); border-radius: 8px; z-index: 2000; padding: 4px 0; min-width: 180px; display: none; }
+    .context-menu-item { padding: 8px 16px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+    .context-menu-item:hover { background: rgba(255,255,255,0.1); }
+    .toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 3000; }
+    .toast { background: var(--accent); color: white; padding: 10px 24px; border-radius: 24px; margin-top: 8px; animation: slideUp 0.3s ease; }
+    .hidden { display: none !important; }
+    @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @media (max-width: 768px) { .sidebar { width:100% !important; max-width:100% !important; } .chat-area { display: none; } .chat-area.mobile-open { display: flex; } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div class="context-menu" id="context-menu"></div>
+  <div class="toast-container"></div>
+  <div class="modal-overlay hidden" id="global-modal"></div>
+  <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
+  <script>
+    // ---------- GLOBALS ----------
+    const API = '/api';
+    let currentUser = null, activeChannel = null, channels = [], channelMessages = new Map();
+    let socket = null, replyToMessageId = null, scrollAtBottom = true;
+
+    const $ = s => document.querySelector(s);
+    const toast = msg => {
+      let c = $('.toast-container'); if(!c) { c=document.createElement('div'); c.className='toast-container'; document.body.appendChild(c); }
+      const el = document.createElement('div'); el.className='toast'; el.textContent=msg; c.appendChild(el);
+      setTimeout(()=>el.remove(),3000);
+    };
+    const formatDate = d => new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const formatTime = d => new Date(d).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+
+    // ---------- API ----------
+    async function apiFetch(url, opts={}) {
+      const headers = { ...opts.headers };
+      if (!(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+      const res = await fetch(API+url, { credentials:'include', headers, ...opts });
+      if (!res.ok) { const err = await res.json().catch(()=>({detail:'Error'})); throw new Error(err.detail); }
+      return res.json();
     }
-    
-    async function register(username, email, password) {
-      await apiFetch('/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          username: username.trim(),
-          email: email.trim(),
-          password
-        })
-      });
-      await checkAuth();
+
+    // ---------- AUTH ----------
+    async function checkAuth() { try { currentUser = await apiFetch('/me'); } catch { currentUser = null; } }
+    async function login(u, p) { await apiFetch('/login',{method:'POST',body:JSON.stringify({username:u.trim(),password:p})}); await checkAuth(); }
+    async function register(u, e, p) { await apiFetch('/register',{method:'POST',body:JSON.stringify({username:u.trim(),email:e.trim(),password:p})}); await checkAuth(); }
+    async function logout() { await apiFetch('/logout',{method:'POST'}); currentUser=null; activeChannel=null; channels=[]; if(socket)socket.disconnect(); }
+
+    // ---------- CHANNELS ----------
+    async function loadChannels() { channels = await apiFetch('/channels'); renderSidebar(); }
+    async function createChannel(type,name,members=[]) { await apiFetch('/channels',{method:'POST',body:JSON.stringify({type,name,members})}); await loadChannels(); }
+    async function leaveChannel(id) { await apiFetch(`/channels/${id}/leave`,{method:'POST'}); if(activeChannel===id) activeChannel=null; await loadChannels(); }
+    async function archiveChannel(id) { await apiFetch(`/channels/${id}/archive`,{method:'POST'}); await loadChannels(); }
+    async function pinChannel(id) { await apiFetch(`/channels/${id}/pin`,{method:'POST'}); await loadChannels(); }
+    async function addMember(chId, userId) { await apiFetch(`/channels/${chId}/members`,{method:'POST',body:JSON.stringify({user_id:userId})}); }
+    async function setDisappearing(chId, ttl) { await apiFetch(`/channels/${chId}/disappearing`,{method:'POST',body:JSON.stringify({ttl})}); }
+
+    // ---------- MESSAGES ----------
+    async function loadMessages(chId, before=null) {
+      if(!chId) return;
+      const url = before ? `/channels/${chId}/messages?before=${before}` : `/channels/${chId}/messages`;
+      const msgs = await apiFetch(url);
+      channelMessages.set(chId, msgs);
     }
-      async function logout() {
-        await apiFetch('/logout', {
-          method: 'POST'
-        });
-        currentUser = null;
-        activeChannel = null;
-        channels = [];
-        channelMessages.clear();
-        if (socket) socket.disconnect();
-      }
-      async function changePassword(oldPwd, newPwd) {
-        await apiFetch('/change-password', {
-          method: 'POST',
-          body: JSON.stringify({
-            old_password: oldPwd,
-            new_password: newPwd
-          })
-        });
-      }
-      async function updateProfile(data) {
-        await apiFetch('/profile', {
-          method: 'PUT',
-          body: JSON.stringify(data)
-        });
-        currentUser = await apiFetch('/me');
-      }
-      async function blockUser(userId) {
-        await apiFetch(`/block/${userId}`, {
-          method: 'POST'
-        });
-      }
-      async function unblockUser(userId) {
-        await apiFetch(`/block/${userId}`, {
-          method: 'DELETE'
-        });
-      }
-      // ---------- CHANNELS ----------
-      async function loadChannels() {
-        const data = await apiFetch('/channels');
-        channels = data;
-        renderSidebar();
-      }
-      async function createChannel(type, name, members = []) {
-        await apiFetch('/channels', {
-          method: 'POST',
-          body: JSON.stringify({
-            type,
-            name,
-            members
-          })
-        });
-        await loadChannels();
-      }
-      async function leaveChannel(channelId) {
-        await apiFetch(`/channels/${channelId}/leave`, {
-          method: 'POST'
-        });
-        if (activeChannel === channelId) activeChannel = null;
-        await loadChannels();
-      }
-      async function archiveChannel(channelId) {
-        await apiFetch(`/channels/${channelId}/archive`, {
-          method: 'POST'
-        });
-        await loadChannels();
-      }
-      async function pinChannel(channelId) {
-        await apiFetch(`/channels/${channelId}/pin`, {
-          method: 'POST'
-        });
-      }
-      async function addMember(channelId, userId) {
-        await apiFetch(`/channels/${channelId}/members`, {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: userId
-          })
-        });
-      }
-      async function setDisappearing(channelId, ttl) {
-        await apiFetch(`/channels/${channelId}/disappearing`, {
-          method: 'POST',
-          body: JSON.stringify({
-            ttl
-          })
-        });
-      }
-      // ---------- MESSAGES ----------
-      async function loadMessages(channelId, before = null) {
-        if (!channelId) return;
-        const url = before ? `/channels/${channelId}/messages?before=${before}` : `/channels/${channelId}/messages`;
-        const msgs = await apiFetch(url);
-        if (!channelMessages.has(channelId)) channelMessages.set(channelId, []);
-        const existing = channelMessages.get(channelId);
-        const ids = new Set(existing.map(m => m.id));
-        const newMsgs = msgs.filter(m => !ids.has(m.id) && !m.is_deleted);
-        if (newMsgs.length) {
-          channelMessages.set(channelId, [...existing, ...newMsgs].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)));
-        }
-      }
-      async function sendMessage(content, type = 'text', file = null) {
-        if (!activeChannel) return;
-        if (type === 'text') {
-          await apiFetch(`/channels/${activeChannel}/messages`, {
-            method: 'POST',
-            body: JSON.stringify({
-              content,
-              type,
-              reply_to: replyToMessageId
-            })
-          });
-        } else {
-          const form = new FormData();
-          form.append('content', content);
-          form.append('type', type);
-          form.append('file', file);
-          if (replyToMessageId) form.append('reply_to', replyToMessageId);
-          await fetch(API + `/channels/${activeChannel}/messages`, {
-            method: 'POST',
-            credentials: 'include',
-            body: form
-          });
-        }
-        replyToMessageId = null;
-      }
-      async function deleteMessage(msgId) {
-        await apiFetch(`/messages/${msgId}`, {
-          method: 'DELETE'
-        });
-      }
-      async function editMessage(msgId, content) {
-        await apiFetch(`/messages/${msgId}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            content
-          })
-        });
-      }
-      async function forwardMessages(channelId, messageIds) {
-        await apiFetch(`/channels/${channelId}/forward`, {
-          method: 'POST',
-          body: JSON.stringify({
-            message_ids: messageIds
-          })
-        });
-        selectedMessages.clear();
-      }
-      async function reactToMessage(msgId, emoji) {
-        await apiFetch(`/messages/${msgId}/react`, {
-          method: 'POST',
-          body: JSON.stringify({
-            emoji
-          })
-        });
-      }
-      async function pinMessage(msgId) {
-        await apiFetch(`/messages/${msgId}/pin`, {
-          method: 'POST'
-        });
-      }
-      async function markRead(channelId) {
-        await apiFetch(`/channels/${channelId}/read`, {
-          method: 'POST'
-        });
-      }
-      async function sendTyping(channelId) {
-        await apiFetch(`/channels/${channelId}/typing`, {
-          method: 'POST'
-        });
-      }
-      // ---------- REAL TIME (Pusher) ----------
-      function initPusher() {
-        if (socket) socket.disconnect();
-        socket = new Pusher(PUSHER_KEY, {
-          cluster: PUSHER_CLUSTER,
-          authEndpoint: API + '/pusher/auth',
-          encrypted: true
-        });
-        socket.connection.bind('connected', () => {
-          if (activeChannel) subscribeToChannel(activeChannel);
-        });
-      }
+    async function sendMessage(content, type='text', file=null) {
+      if(!activeChannel) return;
+      if(type==='text') await apiFetch(`/channels/${activeChannel}/messages`,{method:'POST',body:JSON.stringify({content,type,reply_to:replyToMessageId})});
+      else { const fd = new FormData(); fd.append('content',content); fd.append('type',type); fd.append('file',file); if(replyToMessageId) fd.append('reply_to',replyToMessageId);
+        await fetch(API+`/channels/${activeChannel}/messages`,{method:'POST',credentials:'include',body:fd}); }
+      replyToMessageId=null;
+    }
+    async function deleteMessage(id) { await apiFetch(`/messages/${id}`,{method:'DELETE'}); }
+    async function editMessage(id, content) { await apiFetch(`/messages/${id}`,{method:'PUT',body:JSON.stringify({content})}); }
+    async function reactToMessage(msgId, emoji) { await apiFetch(`/messages/${msgId}/react`,{method:'POST',body:JSON.stringify({emoji})}); }
+    async function pinMessage(msgId) { await apiFetch(`/messages/${msgId}/pin`,{method:'POST'}); }
+    async function markRead(chId) { await apiFetch(`/channels/${chId}/read`,{method:'POST'}); }
 
-      function subscribeToChannel(channelId) {
-        socket.unsubscribe(`private-channel-${channelId}`);
-        const channel = socket.subscribe(`private-channel-${channelId}`);
-        channel.bind('new-message', data => {
-          const msgs = channelMessages.get(channelId) || [];
-          msgs.push(data.message);
-          channelMessages.set(channelId, msgs);
-          if (activeChannel === channelId) renderMessages();
-        });
-        channel.bind('message-updated', data => {
-          const msgs = channelMessages.get(channelId);
-          if (!msgs) return;
-          const idx = msgs.findIndex(m => m.id === data.message.id);
-          if (idx > -1) msgs[idx] = {
-            ...msgs[idx],
-            ...data.message
-          };
-          if (activeChannel === channelId) renderMessages();
-        });
-        channel.bind('message-deleted', data => {
-          const msgs = channelMessages.get(channelId);
-          if (!msgs) return;
-          const msg = msgs.find(m => m.id === data.message_id);
-          if (msg) msg.is_deleted = true;
-          if (activeChannel === channelId) renderMessages();
-        });
-        channel.bind('reaction-updated', data => {
-          const msgs = channelMessages.get(channelId);
-          if (!msgs) return;
-          const msg = msgs.find(m => m.id === data.message_id);
-          if (msg) msg.reactions = data.reactions;
-          if (activeChannel === channelId) renderMessages();
-        });
-        channel.bind('typing', data => {
-          typingUsers[channelId] = typingUsers[channelId] || {};
-          typingUsers[channelId][data.user_id] = data.username;
-          updateTypingIndicator();
-        });
-        channel.bind('read-receipt', data => {
-          const msgs = channelMessages.get(channelId);
-          if (!msgs) return;
-          msgs.forEach(m => {
-            if (data.message_ids.includes(m.id)) m.read_status = 'read';
-          });
-          if (activeChannel === channelId) renderMessages();
-        });
-      }
+    // ---------- USER PROFILE & ACTIONS ----------
+    async function updateProfile(data) { await apiFetch('/profile',{method:'PUT',body:JSON.stringify(data)}); currentUser = await apiFetch('/me'); }
+    async function changePassword(oldPwd, newPwd) { await apiFetch('/change-password',{method:'POST',body:JSON.stringify({old_password:oldPwd,new_password:newPwd})}); }
+    async function blockUser(userId) { await apiFetch(`/block/${userId}`,{method:'POST'}); }
+    async function unblockUser(userId) { await apiFetch(`/block/${userId}`,{method:'DELETE'}); }
 
-      function updateTypingIndicator() {
-        if (!activeChannel) return;
-        const typing = Object.values(typingUsers[activeChannel] || {});
-        const el = $('#typing-indicator');
-        if (el) el.textContent = typing.length ? typing.join(', ') + ' typing…' : '';
-        setTimeout(() => {
-          delete typingUsers[activeChannel];
-          if (activeChannel) $('#typing-indicator').textContent = '';
-        }, 5000);
-      }
-      // ---------- RENDERING ----------
-      async function initApp() {
-        await checkAuth();
-        if (!currentUser) {
-          renderAuthScreen();
-        } else {
-          renderMainUI();
-          await loadChannels();
-          initPusher();
-          initEventListeners();
-          if (activeChannel) switchChannel(activeChannel);
-          checkUrlParams();
-        }
-      }
+    // ---------- BOOKMARKS ----------
+    async function addBookmark(msgId, folder='General') { await apiFetch('/bookmarks',{method:'POST',body:JSON.stringify({message_id:msgId,folder})}); }
+    async function getBookmarks() { return await apiFetch('/bookmarks'); }
 
-      function renderAuthScreen() {
-        $('#app').innerHTML = `
-    <div class="modal-overlay" style="display:flex;">
-      <div class="modal">
-        <h2>Welcome to Chatta</h2>
+    // ---------- TASKS ----------
+    async function createTask(msgId, title) { await apiFetch('/tasks',{method:'POST',body:JSON.stringify({message_id:msgId,title})}); }
+    async function getTasks() { return await apiFetch('/tasks'); }
+
+    // ---------- DRAFTS ----------
+    async function saveDraft(chId, content) { await apiFetch(`/channels/${chId}/draft`,{method:'POST',body:JSON.stringify({content})}); }
+    async function getDraft(chId) { const d = await apiFetch(`/channels/${chId}/draft`); return d.content || ''; }
+
+    // ---------- CUSTOM STATUS ----------
+    async function setCustomStatus(content, emoji='', type='text') { await apiFetch('/status',{method:'POST',body:JSON.stringify({type,content,emoji})}); }
+    async function getStatuses() { return await apiFetch('/statuses'); }
+
+    // ---------- ADMIN ----------
+    async function getAdminChannels() { return await apiFetch('/admin/channels'); }
+
+    // ---------- PUSHER ----------
+    function initPusher() {
+      if(socket) socket.disconnect();
+      socket = new Pusher("""+PUSHER_KEY+""", { cluster: """+PUSHER_CLUSTER+""", authEndpoint: API+'/pusher/auth', encrypted: true });
+      socket.connection.bind('connected', ()=>{ if(activeChannel) subscribeToChannel(activeChannel); });
+    }
+    function subscribeToChannel(chId) {
+      const ch = socket.subscribe('private-channel-'+chId);
+      ch.bind('new-message', data => { const msgs = channelMessages.get(chId)||[]; msgs.push(data.message); channelMessages.set(chId, msgs); if(activeChannel===chId) renderMessages(); });
+      ch.bind('message-updated', data => { const msgs = channelMessages.get(chId); if(msgs){ const idx = msgs.findIndex(m=>m.id===data.message.id); if(idx>-1) msgs[idx] = {...msgs[idx], ...data.message}; if(activeChannel===chId) renderMessages(); } });
+      ch.bind('message-deleted', data => { const msgs = channelMessages.get(chId); if(msgs){ const m = msgs.find(m=>m.id===data.message_id); if(m) m.is_deleted=true; if(activeChannel===chId) renderMessages(); } });
+      ch.bind('typing', data => { /* typing indicator logic */ });
+    }
+
+    // ---------- RENDERING ----------
+    function renderAuthScreen() {
+      $('#app').innerHTML = `<div class="modal-overlay" style="display:flex;"><div class="modal">
+        <h2>Welcome</h2>
         <input id="auth-username" placeholder="Username" />
-        <input id="auth-email" placeholder="Email (for register)" />
+        <input id="auth-email" placeholder="Email (register)" />
         <input id="auth-password" type="password" placeholder="Password" />
-        <div class="flex">
-          <button id="btn-login">Login</button>
-          <button id="btn-register">Register</button>
-        </div>
-      </div>
-    </div>`;
-        document.getElementById('btn-login').onclick = async () => {
-          const u = document.getElementById('auth-username').value;
-          const p = document.getElementById('auth-password').value;
-          try {
-            await login(u, p);
-            initApp();
-          } catch (e) {
-            toast(e.message);
-          }
-        };
-        document.getElementById('btn-register').onclick = async () => {
-          const u = document.getElementById('auth-username').value;
-          const e = document.getElementById('auth-email').value;
-          const p = document.getElementById('auth-password').value;
-          try {
-            await register(u, e, p);
-            initApp();
-          } catch (e) {
-            toast(e.message);
-          }
-        };
-      }
+        <button id="btn-login">Login</button> <button id="btn-register">Register</button>
+      </div></div>`;
+      $('#btn-login').onclick = async () => { try { await login($('#auth-username').value, $('#auth-password').value); initApp(); } catch(e){ toast(e.message); } };
+      $('#btn-register').onclick = async () => { try { await register($('#auth-username').value, $('#auth-email').value, $('#auth-password').value); initApp(); } catch(e){ toast(e.message); } };
+    }
 
-      function renderMainUI() {
-        $('#app').innerHTML = `
-    <div class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <img src="${currentUser.avatar_url}" class="avatar" onclick="openProfile()" />
-        <div style="flex:1">
-          <div style="font-weight:600">${currentUser.username}</div>
-          <div style="font-size:12px;color:var(--text-secondary)">${currentUser.status_preset}</div>
-        </div>
-        <button id="btn-logout" title="Logout">⏻</button>
-        <button id="btn-theme" title="Toggle theme">🌓</button>
-        <button id="btn-admin" title="Admin Panel" style="${currentUser.role === 'admin' ? '' : 'display:none'}">⚙</button>
-      </div>
-      <div class="search-box">
-        <span class="search-icon">🔍</span>
-        <input id="global-search" placeholder="Search or start new chat (Ctrl+K)" />
-      </div>
-      <div class="channel-list" id="channel-list"></div>
-      <div class="resize-bar" id="resize-bar"></div>
-    </div>
-    <div class="chat-area" id="chat-area">
-      <div class="chat-header">
-        <button class="back-btn" id="mobile-back">←</button>
-        <div class="channel-title" id="channel-title">Select a channel</div>
-        <div id="typing-indicator" style="font-size:12px;color:var(--accent);"></div>
-        <button id="btn-pinned" title="Pinned messages">📌</button>
-        <button id="btn-media-gallery" title="Shared media">🖼</button>
-        <button id="btn-search-in-chat" title="Search">🔎</button>
-        <button id="btn-channel-info" title="Channel info">⚙</button>
-      </div>
-      <div class="chat-messages" id="chat-messages"></div>
-      <div class="scroll-down-btn" id="scroll-down-btn">↓</div>
-      <div class="chat-input">
-        <button id="btn-emoji" title="Emoji">😊</button>
-        <button id="btn-attach" title="Attach">📎</button>
-        <textarea id="message-input" placeholder="Type a message..." rows="1"></textarea>
-        <button id="btn-voice" title="Voice note">🎤</button>
-        <button class="send-btn" id="btn-send">➤</button>
-      </div>
-    </div>
-    <div class="context-menu" id="context-menu"></div>
-    <div class="toast-container"></div>
-    <div class="modal-overlay hidden" id="global-modal"></div>
-    <div class="lightbox-overlay hidden" id="lightbox-overlay" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:5000;display:flex;align-items:center;justify-content:center;">
-      <img id="lightbox-img" style="max-width:90%;max-height:90%;" />
-      <button id="lightbox-close" style="position:absolute;top:20px;right:20px;background:none;border:none;font-size:30px;color:white;">✕</button>
-      <a id="lightbox-download" download style="position:absolute;bottom:20px;right:20px;background:var(--accent);padding:10px;border-radius:50%;color:white;">⬇</a>
-    </div>`;
-      }
-
-      function renderSidebar() {
-        const list = document.getElementById('channel-list');
-        if (!list) return;
-        let filteredChannels = channels;
-        if (activeView === 'unread') filteredChannels = channels.filter(ch => ch.unread_count > 0);
-        else if (activeView === 'starred') filteredChannels = channels.filter(ch => ch.starred);
-        // else folder / all
-        list.innerHTML = filteredChannels.map(ch => `
-    <div class="channel-item ${ch.id === activeChannel ? 'active' : ''}" data-channel="${ch.id}">
-      <img src="${ch.avatar_url || '/api/placeholder/44/44'}" class="avatar" />
-      <div class="channel-info">
-        <div class="channel-name">${ch.name} ${ch.unread_count ? `<span class="unread-badge">${ch.unread_count}</span>` : ''}</div>
-        <div class="channel-last-msg">${ch.last_msg || ''}</div>
-      </div>
-    </div>`).join('');
-        // event delegation
-        document.querySelectorAll('.channel-item').forEach(el => {
-          el.onclick = () => switchChannel(el.dataset.channel);
-        });
-      }
-      async function switchChannel(channelId) {
-        if (!channelId || activeChannel === channelId) return;
-        activeChannel = channelId;
-        document.getElementById('channel-title').textContent = channels.find(c => c.id === channelId)?.name || '';
-        document.getElementById('chat-messages').innerHTML = '<div class="skeleton" style="height:400px;"></div>';
-        await loadMessages(channelId);
-        renderMessages();
-        subscribeToChannel(channelId);
-        markRead(channelId);
-        renderSidebar();
-        scrollToBottom(true);
-        // Mobile: show chat area
-        document.getElementById('chat-area').classList.add('mobile-open');
-      }
-
-      function renderMessages() {
-        const container = document.getElementById('chat-messages');
-        if (!container || !activeChannel) return;
-        const msgs = channelMessages.get(activeChannel) || [];
-        let html = '';
-        let lastUser = null,
-          lastTime = 0;
-        msgs.forEach((msg, i) => {
-          if (msg.is_deleted) {
-            html += `<div class="message-row system"><div class="message-bubble" style="font-style:italic;color:var(--text-secondary);">This message was deleted</div></div>`;
-            return;
-          }
-          const isOutgoing = msg.user_id === currentUser.id;
-          const showAvatar = !isOutgoing && msg.user_id !== lastUser;
-          const timeDiff = new Date(msg.created_at) - lastTime;
-          const showTime = i === 0 || timeDiff > 300000;
-          if (showTime) html += `<div class="message-time" style="text-align:center;font-size:12px;color:var(--text-secondary);margin:10px 0;">${formatDate(msg.created_at)}</div>`;
-          html += `
-      <div class="message-row ${isOutgoing ? 'outgoing' : 'incoming'}" data-id="${msg.id}" oncontextmenu="showContextMenu(event, '${msg.id}')">
-        ${!isOutgoing && showAvatar ? `<img src="${msg.avatar_url || '/api/placeholder/30/30'}" class="avatar" style="width:30px;height:30px;align-self:flex-end;margin-right:6px;" />` : ''}
-        <div style="display:flex;flex-direction:column;max-width:75%;">
-          ${msg.reply_to ? `<div class="reply-preview" onclick="scrollToMessage('${msg.reply_to}')">↩ Replying to a message</div>` : ''}
-          ${msg.thread_parent ? `<div class="thread-indicator" style="font-size:12px;color:var(--accent);cursor:pointer;" onclick="openThread('${msg.thread_parent}')">🧵 View thread</div>` : ''}
-          <div class="message-bubble" style="${msg.type === 'image' ? 'padding:4px;' : ''} ${msg.type === 'interactive' ? 'background:transparent;border:1px solid var(--accent);' : ''}">
-            ${msg.type === 'text' || msg.type === 'draft' ? formatContent(msg.content) : ''}
-            ${msg.type === 'image' ? `<img src="${msg.content}" style="max-width:250px;border-radius:8px;cursor:pointer;" onclick="openLightbox('${msg.content}')" />` : ''}
-            ${msg.type === 'video' ? `<video controls src="${msg.content}" style="max-width:250px;border-radius:8px;"></video>` : ''}
-            ${msg.type === 'audio' ? `<audio controls src="${msg.content}" style="max-width:200px;"></audio>` : ''}
-            ${msg.type === 'file' ? `<a href="${msg.content}" target="_blank" style="color:var(--accent);">📎 ${msg.filename || 'File'}</a>` : ''}
-            ${msg.type === 'vcard' ? `<div class="vcard" style="background:var(--bg-main);padding:8px;border-radius:8px;">👤 ${msg.vcard_name}</div>` : ''}
-            ${msg.type === 'interactive' ? `<div>${msg.content}</div><div style="display:flex;gap:6px;margin-top:6px;">${msg.buttons.map(b => `<button class="interactive-btn" data-btn-id="${b.id}" style="padding:6px 12px;border-radius:20px;border:1px solid var(--accent);background:var(--bg-panel);color:var(--text-primary);cursor:pointer;">${b.label}</button>`).join('')}</div>` : ''}
+    function renderMainUI() {
+      $('#app').innerHTML = `
+        <div class="sidebar">
+          <div class="sidebar-header">
+            <img src="${currentUser.avatar_url}" class="avatar" onclick="openProfileModal()" />
+            <div style="flex:1"><div style="font-weight:600">${currentUser.username}</div></div>
+            <button id="btn-logout">⏻</button>
           </div>
-          <div class="message-reactions">${(msg.reactions || []).map(r => `<span class="reaction-badge" onclick="showReactionDetail('${msg.id}', '${r.emoji}')" title="${r.users.map(u=>u.username).join(', ')}">${r.emoji} ${r.count}</span>`).join('')}</div>
-          <div class="message-meta">
-            ${msg.is_edited ? '<span>✎</span>' : ''}
-            <span class="ticks" onclick="showReadReceipts('${msg.id}')">${msg.read_status === 'read' ? '✓✓' : (msg.read_status === 'delivered' ? '✓✓' : '✓')}</span>
-            <span>${formatTime(msg.created_at)}</span>
-          </div>
+          <div class="search-box"><input id="global-search" placeholder="Search (Ctrl+K)" /></div>
+          <div class="channel-list" id="channel-list"></div>
         </div>
-      </div>`;
-          lastUser = msg.user_id;
-          lastTime = new Date(msg.created_at);
-        });
-        container.innerHTML = html;
-        // Scroll management
-        if (scrollAtBottom) container.scrollTop = container.scrollHeight;
-        // Attach interactive button events
-        document.querySelectorAll('.interactive-btn').forEach(btn => {
-          btn.onclick = async () => {
-            await apiFetch(`/interactive/${btn.dataset.btnId}/respond`, {
-              method: 'POST'
-            });
-          };
-        });
-      }
+        <div class="chat-area" id="chat-area">
+          <div class="chat-header">
+            <div class="channel-title" id="channel-title">Select a channel</div>
+            <button onclick="openChannelInfoModal()">⚙</button>
+            <button onclick="openPinnedMessages()">📌</button>
+            <button onclick="openBookmarksModal()">⭐</button>
+            <button onclick="openTasksModal()">✅</button>
+            <button onclick="openStatusesModal()">📊</button>
+            <button onclick="openAdminPanel()" id="btn-admin" style="display:${currentUser.role==='admin'?'':'none'}">🔧</button>
+          </div>
+          <div class="chat-messages" id="chat-messages"></div>
+          <div class="chat-input">
+            <textarea id="message-input" placeholder="Type a message..." rows="1"></textarea>
+            <button id="btn-send" class="send-btn">➤</button>
+          </div>
+        </div>`;
+      renderSidebar();
+      document.getElementById('btn-logout').onclick = async () => { await logout(); initApp(); };
+      document.getElementById('btn-send').onclick = () => { const inp = document.getElementById('message-input'); if(inp.value.trim()) { sendMessage(inp.value); inp.value=''; } };
+      document.getElementById('global-search').addEventListener('keydown', e => { if(e.key==='Enter') globalSearch(e.target.value); });
+    }
 
-      function formatContent(text) {
-        return text
-          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-          .replace(/\*(.+?)\*/g, '<em>$1</em>')
-          .replace(/`(.+?)`/g, '<code>$1</code>')
-          .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-      }
-      // ---------- CONTEXT MENU ----------
-      window.showContextMenu = (e, msgId) => {
-        e.preventDefault();
-        const menu = document.getElementById('context-menu');
-        menu.innerHTML = `
-    <div class="context-menu-item" onclick="replyToMessage('${msgId}')">↩ Reply</div>
-    <div class="context-menu-item" onclick="addToForward('${msgId}')">↪ Forward</div>
-    <div class="context-menu-item" onclick="editMsg('${msgId}')">✎ Edit</div>
-    <div class="context-menu-item" onclick="deleteMsg('${msgId}')">🗑 Delete</div>
-    <div class="context-menu-item" onclick="copyMessageText('${msgId}')">📋 Copy</div>
-    <div class="context-menu-item" onclick="pinMsg('${msgId}')">📌 Pin</div>
-    <div class="context-menu-item" onclick="addReaction('${msgId}')">😀 React</div>
-    <div class="context-menu-item" onclick="createTaskFromMsg('${msgId}')">✅ Task</div>
-    <div class="context-menu-item" onclick="bookmarkMsg('${msgId}')">⭐ Bookmark</div>
-    <div class="context-menu-item" onclick="tagMsg('${msgId}')">🏷 Tag</div>`;
-        menu.style.display = 'block';
-        menu.style.left = Math.min(e.clientX, window.innerWidth - 200) + 'px';
-        menu.style.top = Math.min(e.clientY, window.innerHeight - 200) + 'px';
-        const close = () => menu.style.display = 'none';
-        document.addEventListener('click', close, {
-          once: true
-        });
+    function renderSidebar() {
+      const list = $('#channel-list');
+      list.innerHTML = channels.map(ch => `<div class="channel-item ${ch.id===activeChannel?'active':''}" data-channel="${ch.id}">
+        <img src="${ch.avatar_url||'/api/placeholder/44/44'}" class="avatar" />
+        <div class="channel-info"><div class="channel-name">${ch.name}</div><div class="channel-last-msg">${ch.last_msg||''}</div></div>
+      </div>`).join('');
+      document.querySelectorAll('.channel-item').forEach(el => el.onclick = () => switchChannel(el.dataset.channel));
+    }
+
+    async function switchChannel(id) {
+      activeChannel = id;
+      $('#channel-title').textContent = channels.find(c=>c.id===id)?.name||'';
+      $('#chat-messages').innerHTML = 'Loading...';
+      await loadMessages(id);
+      renderMessages();
+      subscribeToChannel(id);
+      markRead(id);
+      renderSidebar();
+    }
+
+    function renderMessages() {
+      const msgs = channelMessages.get(activeChannel)||[];
+      $('#chat-messages').innerHTML = msgs.map(m => {
+        if(m.is_deleted) return `<div class="message-row system"><div class="message-bubble">Deleted</div></div>`;
+        const isOut = m.user_id === currentUser.id;
+        let html = `<div class="message-row ${isOut?'outgoing':'incoming'}">`;
+        html += `<div class="message-bubble">${m.content.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
+        html += `<div class="message-meta"><span>${formatTime(m.created_at)}</span></div>`;
+        html += `</div>`;
+        return html;
+      }).join('');
+      if(scrollAtBottom) $('#chat-messages').scrollTop = $('#chat-messages').scrollHeight;
+    }
+
+    // ---------- MODALS (generic) ----------
+    function openModal(html) {
+      const modal = $('#global-modal');
+      modal.innerHTML = `<div class="modal">${html}</div>`;
+      modal.classList.remove('hidden');
+      modal.querySelector('.modal').addEventListener('click', e => e.stopPropagation());
+      modal.onclick = () => modal.classList.add('hidden');
+    }
+
+    // ---------- SPECIFIC MODALS ----------
+    function openProfileModal() {
+      openModal(`
+        <h2>Edit Profile</h2>
+        <input id="prof-bio" placeholder="Bio" value="${currentUser.bio||''}" />
+        <input id="prof-phone" placeholder="Phone" value="${currentUser.phone||''}" />
+        <input id="prof-avatar" placeholder="Avatar URL" value="${currentUser.avatar_url}" />
+        <select id="prof-status">
+          <option value="online" ${currentUser.status_preset==='online'?'selected':''}>Online</option>
+          <option value="away" ${currentUser.status_preset==='away'?'selected':''}>Away</option>
+          <option value="busy" ${currentUser.status_preset==='busy'?'selected':''}>Busy</option>
+        </select>
+        <button onclick="saveProfile()">Save</button>
+        <hr>
+        <h3>Change Password</h3>
+        <input id="old-pwd" type="password" placeholder="Old password" />
+        <input id="new-pwd" type="password" placeholder="New password" />
+        <button onclick="changePwd()">Change Password</button>
+        <hr>
+        <h3>Block / Unblock</h3>
+        <input id="block-user-id" placeholder="User ID to block/unblock" />
+        <button onclick="blockUserFunc()">Block</button>
+        <button onclick="unblockUserFunc()">Unblock</button>
+      `);
+      window.saveProfile = async () => {
+        await updateProfile({ bio: $('#prof-bio').value, phone: $('#prof-phone').value, avatar_url: $('#prof-avatar').value, status_preset: $('#prof-status').value });
+        toast('Profile updated'); $('#global-modal').classList.add('hidden'); renderMainUI();
       };
-      async function replyToMessage(msgId) {
-        replyToMessageId = msgId;
-        toast('Reply mode activated');
-      }
-      async function addToForward(msgId) {
-        selectedMessages.add(msgId);
-        toast(`Selected, now forward to a channel`);
-      }
-      async function editMsg(msgId) {
-        const newText = prompt('Edit message:');
-        if (newText) await editMessage(msgId, newText);
-      }
-      async function deleteMsg(msgId) {
-        await deleteMessage(msgId);
-      }
-      async function copyMessageText(msgId) {
-        const msgs = channelMessages.get(activeChannel);
-        const msg = msgs.find(m => m.id === msgId);
-        if (msg) {
-          await navigator.clipboard.writeText(msg.content);
-          toast('Copied!');
+      window.changePwd = async () => {
+        await changePassword($('#old-pwd').value, $('#new-pwd').value);
+        toast('Password changed'); $('#global-modal').classList.add('hidden');
+      };
+      window.blockUserFunc = async () => { await blockUser(parseInt($('#block-user-id').value)); toast('Blocked'); };
+      window.unblockUserFunc = async () => { await unblockUser(parseInt($('#block-user-id').value)); toast('Unblocked'); };
+    }
+
+    function openChannelInfoModal() {
+      if(!activeChannel) return;
+      const ch = channels.find(c=>c.id===activeChannel);
+      if(!ch) return;
+      openModal(`
+        <h2>Channel: ${ch.name}</h2>
+        <p>Type: ${ch.type}</p>
+        <button onclick="leaveChannel('${ch.id}')">Leave</button>
+        <button onclick="archiveChannel('${ch.id}')">Archive</button>
+        <button onclick="pinChannel('${ch.id}')">${ch.starred?'Unstar':'Star'}</button>
+        <hr>
+        <input id="add-member-id" placeholder="User ID to add" />
+        <button onclick="addMember('${ch.id}', parseInt($('#add-member-id').value))">Add Member</button>
+        <hr>
+        <select id="ttl-select">
+          <option value="86400">24 hours</option>
+          <option value="604800">7 days</option>
+          <option value="7776000">90 days</option>
+          <option value="0">Off</option>
+        </select>
+        <button onclick="setDisappearing('${ch.id}', parseInt($('#ttl-select').value))">Set Disappearing</button>
+      `);
+    }
+
+    async function openPinnedMessages() {
+      if(!activeChannel) return;
+      const res = await apiFetch(`/channels/${activeChannel}/messages`); // we need pinned endpoint, but for demo we just fetch pinned via client filter
+      // For full implementation, you'd call a dedicated /pins endpoint. We'll just show recent messages with pin icon.
+      const msgs = channelMessages.get(activeChannel)||[];
+      const pinned = msgs.filter(m => m.pinned); // assuming pinned flag
+      let html = pinned.map(m => `<div onclick="switchToMessage('${m.id}')" style="cursor:pointer;padding:4px;border-bottom:1px solid gray;">📌 ${m.content.substring(0,50)}</div>`).join('');
+      openModal(`<h2>Pinned Messages</h2>${html||'No pinned messages'}`);
+    }
+
+    async function openBookmarksModal() {
+      const bm = await getBookmarks();
+      let html = bm.map(b => `
+        <div style="padding:8px;border-bottom:1px solid #333;cursor:pointer;" onclick="jumpToBookmark('${b.message_id}')">
+          <strong>${b.folder}</strong>: ${b.content?.substring(0,50)} (${b.created_at})
+        </div>`).join('');
+      openModal(`<h2>Bookmarks</h2>${html||'No bookmarks yet'}`);
+      window.jumpToBookmark = (msgId) => {
+        // For simplicity, we just switch to the channel and scroll. In a real app, you'd open the correct channel.
+        // We'll assume the bookmark holds channel_id, so switch and scroll.
+        const bmEntry = bm.find(b=>b.message_id===msgId);
+        if(bmEntry?.channel_id) {
+          switchChannel(bmEntry.channel_id);
+          setTimeout(() => scrollToMessage(msgId), 500);
         }
-      }
-      async function pinMsg(msgId) {
-        await pinMessage(msgId);
-        toast('Pinned');
-      }
-      async function addReaction(msgId) {
-        const emoji = prompt('Enter emoji:');
-        if (emoji) await reactToMessage(msgId, emoji);
-      }
-      async function createTaskFromMsg(msgId) {
-        const title = prompt('Task title:');
-        if (title) await apiFetch('/tasks', {
-          method: 'POST',
-          body: JSON.stringify({
-            message_id: msgId,
-            title
-          })
-        });
-      }
-      async function bookmarkMsg(msgId) {
-        const folder = prompt('Bookmark folder (default: General):') || 'General';
-        await apiFetch('/bookmarks', {
-          method: 'POST',
-          body: JSON.stringify({
-            message_id: msgId,
-            folder
-          })
-        });
-      }
-      async function tagMsg(msgId) {
-        const tagName = prompt('Tag name:');
-        if (tagName) await apiFetch(`/messages/${msgId}/tag`, {
-          method: 'POST',
-          body: JSON.stringify({
-            tag: tagName
-          })
-        });
-      }
-      // ---------- MODALS & OVERLAYS ----------
-      function openProfile() {
-        /* profile editing modal */ }
+        $('#global-modal').classList.add('hidden');
+      };
+    }
 
-      function openChannelInfo() {
-        /* channel settings */ }
+    async function openTasksModal() {
+      const tasks = await getTasks();
+      let html = tasks.map(t => `<div>${t.is_done?'✅':'⬜'} ${t.title} (due: ${t.due_date||'none'})</div>`).join('');
+      openModal(`<h2>Tasks</h2>${html||'No tasks'}`);
+    }
 
-      function openLightbox(url) {
-        const overlay = document.getElementById('lightbox-overlay');
-        overlay.classList.remove('hidden');
-        document.getElementById('lightbox-img').src = url;
-        document.getElementById('lightbox-download').href = url;
-        document.getElementById('lightbox-close').onclick = () => overlay.classList.add('hidden');
-      }
+    async function openStatusesModal() {
+      const statuses = await getStatuses();
+      let html = statuses.map(s => `<div><strong>${s.username}</strong>: ${s.emoji} ${s.content}</div>`).join('');
+      openModal(`<h2>Custom Statuses</h2>${html||'No statuses set'} <input id="status-text" placeholder="Your status" /><input id="status-emoji" placeholder="Emoji" /><button onclick="setCustomStatus($('#status-text').value, $('#status-emoji').value)">Set</button>`);
+    }
 
-      function openThread(parentId) {
-        /* load thread messages in modal */ }
+    async function openAdminPanel() {
+      const channels = await getAdminChannels();
+      let html = channels.map(ch => `
+        <div style="padding:4px;border-bottom:1px solid #333;">
+          ${ch.name} (${ch.type})
+          <button onclick="archiveChannel('${ch.id}')">Archive</button>
+          <button onclick="forceJoin('${ch.id}')">Join</button>
+        </div>`).join('');
+      openModal(`<h2>Admin Panel</h2>${html}`);
+      window.forceJoin = async (chId) => { await apiFetch(`/channels/${chId}/members`,{method:'POST',body:JSON.stringify({user_id:currentUser.id})}); toast('Joined'); };
+    }
 
-      function showReadReceipts(msgId) {
-        /* modal with users */ }
+    // ---------- CONTEXT MENU (on messages) ----------
+    window.showContextMenu = (e, msgId) => {
+      e.preventDefault();
+      const menu = $('#context-menu');
+      menu.innerHTML = `
+        <div class="context-menu-item" onclick="replyTo('${msgId}')">↩ Reply</div>
+        <div class="context-menu-item" onclick="editMsg('${msgId}')">✎ Edit</div>
+        <div class="context-menu-item" onclick="deleteMsg('${msgId}')">🗑 Delete</div>
+        <div class="context-menu-item" onclick="copyMsg('${msgId}')">📋 Copy</div>
+        <div class="context-menu-item" onclick="pinMsg('${msgId}')">📌 Pin</div>
+        <div class="context-menu-item" onclick="reactMsg('${msgId}')">😀 React</div>
+        <div class="context-menu-item" onclick="taskFromMsg('${msgId}')">✅ Task</div>
+        <div class="context-menu-item" onclick="bookmarkMsg('${msgId}')">⭐ Bookmark</div>
+        <div class="context-menu-item" onclick="tagMsg('${msgId}')">🏷 Tag</div>
+      `;
+      menu.style.display = 'block';
+      menu.style.left = Math.min(e.clientX, window.innerWidth-200) + 'px';
+      menu.style.top = Math.min(e.clientY, window.innerHeight-200) + 'px';
+      document.addEventListener('click', () => menu.style.display = 'none', {once:true});
+    };
+    window.replyTo = (id) => { replyToMessageId = id; toast('Reply mode'); };
+    window.editMsg = async (id) => { const newText = prompt('Edit message:'); if(newText) await editMessage(id, newText); };
+    window.deleteMsg = async (id) => { await deleteMessage(id); };
+    window.copyMsg = async (id) => { const msgs = channelMessages.get(activeChannel); const msg = msgs.find(m=>m.id===id); if(msg) await navigator.clipboard.writeText(msg.content); toast('Copied'); };
+    window.pinMsg = async (id) => { await pinMessage(id); toast('Pinned'); };
+    window.reactMsg = async (id) => { const emoji = prompt('Emoji:'); if(emoji) await reactToMessage(id, emoji); };
+    window.taskFromMsg = async (id) => { const title = prompt('Task title:'); if(title) await createTask(id, title); toast('Task created'); };
+    window.bookmarkMsg = async (id) => { const folder = prompt('Folder (default General):')||'General'; await addBookmark(id, folder); toast('Bookmarked'); };
+    window.tagMsg = async (id) => { const tag = prompt('Tag:'); if(tag) await apiFetch(`/messages/${id}/tag`,{method:'POST',body:JSON.stringify({tag})}); toast('Tagged'); };
 
-      function showReactionDetail(msgId, emoji) {
-        /* modal with user list */ }
-      // ---------- VOICE NOTE ----------
-      async function startVoice() {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true
-          });
-          recordingMedia = new MediaRecorder(stream);
-          audioChunks = [];
-          recordingMedia.ondataavailable = e => audioChunks.push(e.data);
-          recordingMedia.onstop = async () => {
-            voiceNoteBlob = new Blob(audioChunks, {
-              type: 'audio/webm'
-            });
-            // send as file
-            const file = new File([voiceNoteBlob], 'voice.webm', {
-              type: 'audio/webm'
-            });
-            await sendMessage('', 'audio', file);
-          };
-          recordingMedia.start();
-          toast('Recording...');
-        } catch (e) {
-          toast('Microphone access denied');
-        }
+    // ---------- INIT ----------
+    async function initApp() {
+      await checkAuth();
+      if(!currentUser) renderAuthScreen();
+      else {
+        renderMainUI();
+        await loadChannels();
+        initPusher();
+        if(activeChannel) switchChannel(activeChannel);
       }
-
-      function stopVoice() {
-        if (recordingMedia && recordingMedia.state === 'recording') recordingMedia.stop();
-      }
-      // ---------- DRAG AND DROP ----------
-      function initDragDrop() {
-        const chatArea = document.getElementById('chat-messages');
-        chatArea.addEventListener('dragover', e => e.preventDefault());
-        chatArea.addEventListener('drop', async e => {
-          e.preventDefault();
-          const files = e.dataTransfer.files;
-          for (let f of files) {
-            const type = f.type.startsWith('image') ? 'image' : f.type.startsWith('video') ? 'video' : f.type.startsWith('audio') ? 'audio' : 'file';
-            await sendMessage(f.name, type, f);
-          }
-        });
-      }
-      // ---------- GLOBAL SEARCH ----------
-      async function globalSearch(query) {
-        const results = await apiFetch(`/search?q=${encodeURIComponent(query)}`);
-        // display results in modal
-      }
-      async function searchInChannel(query) {
-        const results = await apiFetch(`/channels/${activeChannel}/search?q=${query}`);
-        // highlight messages
-      }
-      // ---------- INFINITE SCROLL ----------
-      function initInfiniteScroll() {
-        const container = document.getElementById('chat-messages');
-        container.addEventListener('scroll', async () => {
-          if (container.scrollTop === 0 && !isLoadingMore) {
-            isLoadingMore = true;
-            const msgs = channelMessages.get(activeChannel) || [];
-            if (msgs.length > 0) {
-              const oldestDate = msgs[0].created_at;
-              await loadMessages(activeChannel, oldestDate);
-              renderMessages();
-              container.scrollTop = 50; // keep position
-            }
-            isLoadingMore = false;
-          }
-          scrollAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
-          const btn = document.getElementById('scroll-down-btn');
-          if (btn) btn.classList.toggle('visible', !scrollAtBottom);
-        });
-      }
-      // ---------- EVENT LISTENERS ----------
-      function initEventListeners() {
-        document.getElementById('btn-logout')?.addEventListener('click', async () => {
-          await logout();
-          initApp();
-        });
-        document.getElementById('btn-theme')?.addEventListener('click', toggleTheme);
-        document.getElementById('btn-admin')?.addEventListener('click', openAdminPanel);
-        document.getElementById('btn-send')?.addEventListener('click', sendTextMessage);
-        document.getElementById('message-input')?.addEventListener('keydown', e => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendTextMessage();
-          }
-        });
-        document.getElementById('message-input')?.addEventListener('input', () => {
-          if (activeChannel) sendTyping(activeChannel);
-        });
-        document.getElementById('btn-attach')?.addEventListener('click', () => document.getElementById('file-input')?.click());
-        document.getElementById('btn-voice')?.addEventListener('mousedown', startVoice);
-        document.getElementById('btn-voice')?.addEventListener('mouseup', stopVoice);
-        document.getElementById('btn-emoji')?.addEventListener('click', () => {
-          const picker = document.createElement('div'); /* simple emoji grid */ ;
-        });
-        document.getElementById('scroll-down-btn')?.addEventListener('click', () => scrollToBottom(true));
-        document.getElementById('mobile-back')?.addEventListener('click', () => {
-          document.getElementById('chat-area').classList.remove('mobile-open');
-        });
-        document.getElementById('global-search')?.addEventListener('keydown', e => {
-          if (e.key === 'Enter') globalSearch(e.target.value);
-        });
-        document.getElementById('btn-pinned')?.addEventListener('click', showPinnedMessages);
-        document.getElementById('btn-media-gallery')?.addEventListener('click', showMediaGallery);
-        document.getElementById('btn-search-in-chat')?.addEventListener('click', () => {
-          const q = prompt('Search in chat:');
-          if (q) searchInChannel(q);
-        });
-        document.getElementById('btn-channel-info')?.addEventListener('click', openChannelInfo);
-        // Keyboard shortcut
-        window.addEventListener('keydown', e => {
-          if (e.ctrlKey && e.key === 'k') {
-            e.preventDefault();
-            document.getElementById('global-search').focus();
-          }
-          if (e.ctrlKey && e.key === 'f') {
-            e.preventDefault();
-            document.getElementById('btn-search-in-chat')?.click();
-          }
-        });
-        // Resize sidebar
-        initResize();
-        initInfiniteScroll();
-        initDragDrop();
-        // Touch gestures
-        initTouchGestures();
-      }
-
-      function sendTextMessage() {
-        const input = document.getElementById('message-input');
-        const content = input.value.trim();
-        if (content) {
-          sendMessage(content, 'text');
-          input.value = '';
-        }
-      }
-
-      function toggleTheme() {
-        const html = document.documentElement;
-        const current = html.getAttribute('data-theme');
-        html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
-      }
-
-      function scrollToBottom(smooth) {
-        const container = document.getElementById('chat-messages');
-        container.scrollTo({
-          top: container.scrollHeight,
-          behavior: smooth ? 'smooth' : 'auto'
-        });
-        scrollAtBottom = true;
-        document.getElementById('scroll-down-btn')?.classList.remove('visible');
-      }
-
-      function initResize() {
-        const sidebar = document.getElementById('sidebar');
-        const bar = document.getElementById('resize-bar');
-        if (!bar) return;
-        let isResizing = false;
-        bar.addEventListener('mousedown', () => isResizing = true);
-        window.addEventListener('mousemove', e => {
-          if (!isResizing) return;
-          const width = Math.min(Math.max(e.clientX, 320), 500);
-          sidebar.style.width = width + 'px';
-        });
-        window.addEventListener('mouseup', () => isResizing = false);
-      }
-
-      function initTouchGestures() {
-        let touchStartX = 0;
-        const sidebar = document.getElementById('sidebar');
-        sidebar.addEventListener('touchstart', e => {
-          touchStartX = e.touches[0].clientX;
-        });
-        sidebar.addEventListener('touchend', e => {
-          const diff = e.changedTouches[0].clientX - touchStartX;
-          if (diff > 50) {
-            /* show sidebar */ }
-        });
-      }
-      // ---------- ADMIN ----------
-      async function openAdminPanel() {
-        const modal = document.getElementById('global-modal');
-        modal.classList.remove('hidden');
-        const data = await apiFetch('/admin/channels');
-        modal.innerHTML = `<div class="modal"><h2>Admin Panel</h2>
-    ${data.map(ch => `<div>${ch.name} - <button onclick="archiveChannel('${ch.id}')">Archive</button> <button onclick="forceJoin('${ch.id}')">Join</button></div>`).join('')}
-    <button onclick="document.getElementById('global-modal').classList.add('hidden')">Close</button></div>`;
-      }
-      // ---------- PWA Registration ----------
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js');
-        });
-      }
-      // ---------- START ----------
-      document.addEventListener('DOMContentLoaded', initApp);
-    </script>
-  </body>
-
+    }
+    window.onload = initApp;
+  </script>
+</body>
 </html>
 """
+
 
 # ---------- Root route serves the frontend ----------
 @app.get("/", response_class=HTMLResponse)
