@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form, Response
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response as PlainResponse
 from jose import jwt, JWTError
 import datetime, os, uuid, base64, json, logging
 import httpx
@@ -51,7 +51,9 @@ async def turso_request(sql: str, params: list = None):
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, headers=headers, json=body, timeout=30.0)
         data = resp.json()
-        if resp.status_code != 200: raise HTTPException(500, f"DB error: {resp.status_code}")
+        if resp.status_code != 200:
+            logger.error(f"Turso error: {resp.status_code} {data}")
+            raise HTTPException(500, f"DB error: {resp.status_code} {data.get('error','unknown')}")
         results = data.get("results", [])
         if not results: return {"rows": [], "rows_written": 0, "rows_read": 0}
         first = results[0]
@@ -104,8 +106,18 @@ def group_reactions(rows):
         groups[e]["users"].append({"user_id": r["user_id"], "username": r.get("username","")})
     return list(groups.values())
 
-# ---------- Embedded Frontend (Full Featured, with safe placeholders) ----------
-# In the JavaScript we use __PUSHER_KEY__ and __PUSHER_CLUSTER__ which will be replaced
+# ---------- Favicon & Placeholder ----------
+@app.get("/favicon.ico")
+async def favicon():
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#00a884"/><text x="6" y="24" font-size="24" fill="white">💬</text></svg>'
+    return PlainResponse(content=svg, media_type="image/svg+xml")
+
+@app.get("/api/placeholder/{width}/{height}")
+async def placeholder(width: int, height: int):
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><rect width="{width}" height="{height}" fill="#555"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="{min(width,height)//5}px">{width}×{height}</text></svg>'
+    return PlainResponse(content=svg, media_type="image/svg+xml")
+
+# ---------- Embedded Frontend (Full Featured) ----------
 FRONTEND_HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -113,6 +125,7 @@ FRONTEND_HTML_TEMPLATE = r"""
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Chatta</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -228,7 +241,9 @@ FRONTEND_HTML_TEMPLATE = r"""
     // Channels
     async function loadChannels() { channels = await apiFetch('/channels'); renderSidebar(); }
     async function createChannel(type, name, members=[]) {
-      await apiFetch('/channels',{method:'POST',body:JSON.stringify({type,name,members})});
+      // Filter out any invalid member IDs (NaN, 0, negative)
+      const validMembers = members.filter(id => Number.isFinite(id) && id > 0);
+      await apiFetch('/channels',{method:'POST',body:JSON.stringify({type,name,members:validMembers})});
       await loadChannels();
     }
     async function leaveChannel(id) { await apiFetch(`/channels/${id}/leave`,{method:'POST'}); if(activeChannel===id) activeChannel=null; await loadChannels(); }
@@ -490,7 +505,8 @@ FRONTEND_HTML_TEMPLATE = r"""
         const type = $('#new-chat-type').value;
         const name = $('#new-chat-name').value.trim();
         const membersStr = $('#new-chat-members').value;
-        const members = membersStr ? membersStr.split(',').map(s => parseInt(s.trim())) : [];
+        // Parse members, filter out NaN and invalid numbers
+        const members = membersStr ? membersStr.split(',').map(s => parseInt(s.trim())).filter(id => !isNaN(id) && id > 0) : [];
         if (type !== 'direct' && !name) { toast('Please enter a name'); return; }
         await createChannel(type, name || 'Direct', members);
         toast('Channel created'); $('#global-modal').classList.add('hidden');
@@ -547,7 +563,7 @@ FRONTEND_HTML_TEMPLATE = r"""
         if(entry?.channel_id) { switchChannel(entry.channel_id); setTimeout(() => scrollToMessage(msgId), 500); }
         $('#global-modal').classList.add('hidden');
       };
-      window.deleteBookmark = async (id) => { /* call delete endpoint if available */ toast('Delete not yet implemented'); };
+      window.deleteBookmark = async (id) => { toast('Delete not yet implemented'); };
     }
 
     // Tasks Modal
@@ -664,7 +680,6 @@ FRONTEND_HTML_TEMPLATE = r"""
 # ---------- Root route ----------
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    # Inject actual Pusher keys into the template
     html = FRONTEND_HTML_TEMPLATE.replace("__PUSHER_KEY__", PUSHER_KEY).replace("__PUSHER_CLUSTER__", PUSHER_CLUSTER)
     return HTMLResponse(content=html)
 
@@ -751,9 +766,15 @@ async def get_channels(user=Depends(get_current_user)):
 @app.post("/api/channels")
 async def create_channel(data: dict, user=Depends(get_current_user)):
     ch_id = str(uuid.uuid4())
-    await db_run("INSERT INTO channels (id, name, type, created_by) VALUES (?, ?, ?, ?)", [ch_id, data["name"], data["type"], user["id"]])
+    name = data.get("name", "Channel")
+    ch_type = data.get("type", "group")
+    # Clean member IDs
+    members = [int(m) for m in data.get("members", []) if isinstance(m, (int, float)) and m > 0]
+    logger.info(f"Creating channel {name} ({ch_type}) with members {members}")
+    await db_run("INSERT INTO channels (id, name, type, created_by) VALUES (?, ?, ?, ?)", [ch_id, name, ch_type, user["id"]])
     await db_run("INSERT INTO channel_members (channel_id, user_id, role) VALUES (?, ?, 'admin')", [ch_id, user["id"]])
-    for m in data.get("members", []): await db_run("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, m])
+    for m in members:
+        await db_run("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, m])
     return {"id": ch_id}
 
 @app.post("/api/channels/{ch_id}/leave")
@@ -773,12 +794,14 @@ async def pin_channel(ch_id: str, user=Depends(get_current_user)):
 
 @app.post("/api/channels/{ch_id}/members")
 async def add_member(ch_id: str, data: dict, user=Depends(get_current_user)):
-    await db_run("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, data["user_id"]])
+    await db_run("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, int(data["user_id"])])
     return {"ok": True}
 
 @app.post("/api/channels/{ch_id}/disappearing")
 async def set_disappearing(ch_id: str, data: dict, user=Depends(get_current_user)):
-    await db_run("UPDATE messages SET disappearing_ttl=? WHERE channel_id=? AND created_at > ?", [data["ttl"], ch_id, datetime.datetime.utcnow()])
+    ttl = int(data["ttl"])
+    if ttl > 0:
+        await db_run("UPDATE messages SET disappearing_ttl=? WHERE channel_id=? AND created_at > ?", [ttl, ch_id, datetime.datetime.utcnow()])
     return {"ok": True}
 
 # ---------- Messages ----------
