@@ -757,27 +757,28 @@ FRONTEND_HTML = """
           currentUser = null;
         }
       }
-      async function login(username, password) {
-        await apiFetch('/login', {
-          method: 'POST',
-          body: JSON.stringify({
-            username,
-            password
-          })
-        });
-        await checkAuth();
-      }
-      async function register(username, email, password) {
-        await apiFetch('/register', {
-          method: 'POST',
-          body: JSON.stringify({
-            username,
-            email,
-            password
-          })
-        });
-        await checkAuth();
-      }
+    async function login(username, password) {
+      await apiFetch('/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: username.trim(),    // <-- added .trim()
+          password
+        })
+      });
+      await checkAuth();
+    }
+    
+    async function register(username, email, password) {
+      await apiFetch('/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: username.trim(),
+          email: email.trim(),
+          password
+        })
+      });
+      await checkAuth();
+    }
       async function logout() {
         await apiFetch('/logout', {
           method: 'POST'
@@ -1547,29 +1548,58 @@ async def health():
 # They all remain identical – no changes needed.
 
 # ---------- Auth Routes ----------
+# ---------- Registration (trims input, logs what is saved) ----------
 @app.post("/api/register")
 async def register(data: dict):
-    await db_run("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                 [data["username"], data["email"], data["password"]])
+    username = data.get("username", "").strip()
+    email = data.get("email", "").strip()
+    password = data.get("password", "")          # keep as plain text for now
+
+    logger.info(f"Registering user: '{username}' / '{email}' / '{password}'")
+
+    await db_run(
+        "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+        [username, email, password]
+    )
     return {"ok": True}
 
+# ---------- Login (trims input, explicit comparison, logs if mismatch) ----------
 @app.post("/api/login")
 async def login(data: dict, response: Response):
-    # Step 1: find user by username
-    rows = await db_execute("SELECT * FROM users WHERE username = ?", [data["username"]])
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    logger.info(f"Login attempt: username='{username}', password='{password}'")
+
+    # Fetch user by exact username (now trimmed)
+    rows = await db_execute(
+        "SELECT * FROM users WHERE username = ?",
+        [username]
+    )
+
     if not rows:
-        raise HTTPException(401, detail="User not found")
+        # Try case‑insensitive or trimmed again as fallback
+        rows = await db_execute(
+            "SELECT * FROM users WHERE LOWER(username) = LOWER(?)",
+            [username]
+        )
+        if not rows:
+            logger.warning(f"No user found for '{username}'")
+            raise HTTPException(401, detail="User not found")
 
     user = rows[0]
     stored_password = user.get("password_hash", "")
 
-    # Step 2: compare plain‑text passwords (replace with hash in production)
-    if stored_password != data["password"]:
-        # Log both values for debugging – check Vercel Function Logs
-        logger.warning(f"Password mismatch for user {data['username']}: stored='{stored_password}', provided='{data['password']}'")
+    # Both are plain text – compare them exactly
+    if stored_password != password:
+        logger.warning(
+            f"Password mismatch for '{username}': "
+            f"stored='{stored_password}' (len={len(stored_password)}), "
+            f"provided='{password}' (len={len(password)})"
+        )
         raise HTTPException(401, detail="Invalid credentials")
 
-    # Step 3: create JWT & session
+    # Create JWT and session
     token = jwt.encode(
         {"user_id": user["id"], "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)},
         JWT_SECRET
@@ -1581,7 +1611,6 @@ async def login(data: dict, response: Response):
         [sess_id, user["id"], "unknown", "unknown"]
     )
     return {"ok": True}
-
 @app.get("/api/me")
 async def me(user=Depends(get_current_user)):
     return user
