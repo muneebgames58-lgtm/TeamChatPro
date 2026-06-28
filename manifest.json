@@ -1,0 +1,13 @@
+{
+  "name": "Chatta",
+  "short_name": "Chatta",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111b21",
+  "theme_color": "#111b21",
+  "icons": [{
+    "src": "/api/placeholder/192/192",
+    "sizes": "192x192",
+    "type": "image/png"
+  }]
+}
