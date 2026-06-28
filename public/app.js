@@ -173,7 +173,7 @@ async function sendTyping(channelId) {
 // ---------- REAL TIME (Pusher) ----------
 function initPusher() {
   if (socket) socket.disconnect();
-  socket = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER, authEndpoint: API + '/pusher/auth', encrypted: true });
+  socket = new Pusher(pusherKey, { cluster: pusherCluster, authEndpoint: API + '/pusher/auth', encrypted: true });
   socket.connection.bind('connected', () => { if (activeChannel) subscribeToChannel(activeChannel); });
 }
 function subscribeToChannel(channelId) {
@@ -233,11 +233,11 @@ async function initApp() {
     renderAuthScreen();
   } else {
     renderMainUI();
+    await loadConfig();          // <-- new
     await loadChannels();
     initPusher();
     initEventListeners();
     if (activeChannel) switchChannel(activeChannel);
-    checkUrlParams();
   }
 }
 
