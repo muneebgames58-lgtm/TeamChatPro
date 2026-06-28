@@ -6,8 +6,8 @@
   "background_color": "#111b21",
   "theme_color": "#111b21",
   "icons": [{
-    "src": "/api/placeholder/192/192",
+    "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='192' height='192'><rect width='192' height='192' fill='%2300a884'/></svg>",
     "sizes": "192x192",
-    "type": "image/png"
+    "type": "image/svg+xml"
   }]
 }
