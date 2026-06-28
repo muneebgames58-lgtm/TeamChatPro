@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form, Response
 from fastapi.responses import JSONResponse, HTMLResponse
 from jose import jwt, JWTError
@@ -34,24 +33,53 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 pusher_client = pusher.Pusher(app_id=PUSHER_APP_ID, key=PUSHER_KEY, secret=PUSHER_SECRET, cluster=PUSHER_CLUSTER, ssl=True)
 
 # ---------- Turso HTTP Helpers ----------
+def _infer_type(value):
+    """Return the Turso type string for a given Python value."""
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "real"
+    if value is None:
+        return "null"
+    return "text"
+
 async def turso_request(sql: str, params: list = None):
+    """Execute SQL via Turso HTTP pipeline API."""
     url = f"{TURSO_URL}/v2/pipeline"
     headers = {
         "Authorization": f"Bearer {TURSO_TOKEN}",
         "Content-Type": "application/json"
     }
+
+    # Build arguments with both type and value
+    args_list = []
+    if params:
+        for p in params:
+            arg_type = _infer_type(p)
+            # Map Python value to the value expected by Turso
+            if arg_type == "null":
+                arg_value = None          # JSON null
+            elif arg_type == "integer":
+                arg_value = int(p)
+            elif arg_type == "real":
+                arg_value = float(p)
+            else:  # text
+                arg_value = str(p)
+            args_list.append({"type": arg_type, "value": arg_value})
+
     body = {
         "requests": [
             {
                 "type": "execute",
                 "stmt": {
                     "sql": sql,
-                    "args": [{"type": _infer_type(p)} for p in params] if params else []
+                    "args": args_list
                 }
             },
             {"type": "close"}
         ]
     }
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, headers=headers, json=body, timeout=30.0)
         if resp.status_code != 200:
@@ -62,13 +90,8 @@ async def turso_request(sql: str, params: list = None):
             return _parse_execute_result(results[0])
         return {"rows": [], "rows_affected": 0}
 
-def _infer_type(value):
-    if isinstance(value, int): return "integer"
-    if isinstance(value, float): return "real"
-    if value is None: return "null"
-    return "text"
-
 def _parse_execute_result(execute_result):
+    """Convert Turso HTTP execute result to list of dicts."""
     result = execute_result.get("response", {}).get("result", {})
     if not result:
         return {"rows": [], "rows_affected": 0}
@@ -125,7 +148,7 @@ def group_reactions(rows):
         groups[emoji]["users"].append({"user_id": r["user_id"], "username": r.get("username", "")})
     return list(groups.values())
 
-# ---------- Embedded Frontend (single HTML file) ----------
+# ---------- Embedded Frontend HTML (your exact copy) ----------
 FRONTEND_HTML = """
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -1519,11 +1542,9 @@ async def health():
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
-# ---------- All other API routes (same as before, unchanged) ----------
-# (Include all the routes from the previous complete version – auth, channels, messages, etc.)
-# For brevity, I've omitted them here but they are identical to the full backend provided earlier.
-# You must copy them from the previous answer into this file after the root route.
-# They all work exactly as before.
+# ---------- All API routes (your existing routes, unchanged) ----------
+# (the entire list of routes from your code above: auth, channels, messages, etc.)
+# They all remain identical – no changes needed.
 
 # ---------- Auth Routes ----------
 @app.post("/api/register")
@@ -1840,6 +1861,3 @@ async def pusher_auth(request: Request, user=Depends(get_current_user)):
 async def respond_button(btn_id: int, user=Depends(get_current_user)):
     await db_run("INSERT OR IGNORE INTO interactive_responses (button_id, user_id) VALUES (?, ?)", [btn_id, user["id"]])
     return {"ok": True}
-
-# ... (copy ALL remaining routes from the previous full backend code here) ...
-# Ensure every API endpoint from the earlier complete version is included.
