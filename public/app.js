@@ -3,22 +3,30 @@ const API = '/api';
 let currentUser = null;
 let activeChannel = null;
 let channels = [];
-let channelMessages = new Map(); // channelId -> messages[]
+let channelMessages = new Map();
 let typingUsers = {};
 let socket = null;
 let replyToMessageId = null;
-let selectedMessages = new Set(); // for forwarding
+let selectedMessages = new Set();
 let searchQuery = '';
-let activeView = 'all'; // all | unread | mentions | folder-xyz | starred
+let activeView = 'all';
 let currentFolder = null;
 let lightboxImage = null;
-let recordingMedia = null; // MediaRecorder
+let recordingMedia = null;
 let audioChunks = [];
 let voiceNoteBlob = null;
 let globalSearchTimer = null;
 let scrollAtBottom = true;
 let isLoadingMore = false;
+let pusherKey = null;
+let pusherCluster = null;
 
+// Fetch config first
+async function loadConfig() {
+  const config = await apiFetch('/config');
+  pusherKey = config.pusher_key;
+  pusherCluster = config.pusher_cluster;
+}
 // ---------- UTILS ----------
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
