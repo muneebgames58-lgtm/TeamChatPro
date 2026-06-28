@@ -40,7 +40,6 @@ async def turso_request(sql: str, params: list = None):
         "Authorization": f"Bearer {TURSO_TOKEN}",
         "Content-Type": "application/json"
     }
-    # Build pipeline request body according to Turso docs
     body = {
         "requests": [
             {
@@ -192,7 +191,7 @@ async def change_password(data: dict, user=Depends(get_current_user)):
     return {"ok": True}
 
 @app.post("/api/block/{user_id}")
-async def block_user(user_id: int, user=Depends(get_current_user):
+async def block_user(user_id: int, user=Depends(get_current_user)):
     await db_run("INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)", [user["id"], user_id])
     return {"ok": True}
 
