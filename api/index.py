@@ -1549,21 +1549,37 @@ async def health():
 
 # ---------- Auth Routes ----------
 # ---------- Registration (trims input, logs what is saved) ----------
+# ---------- Registration (with verification) ----------
 @app.post("/api/register")
 async def register(data: dict):
     username = data.get("username", "").strip()
     email = data.get("email", "").strip()
-    password = data.get("password", "")          # keep as plain text for now
+    password = data.get("password", "")
 
-    logger.info(f"Registering user: '{username}' / '{email}' / '{password}'")
+    logger.info(f"Registering user: '{username}' / '{email}'")
 
-    await db_run(
+    # 1. Insert the user
+    result = await db_run(
         "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
         [username, email, password]
     )
+
+    # 2. Check if the insertion actually happened (rows_affected should be 1)
+    if result.get("rows_affected", 0) == 0:
+        logger.error(f"Insert failed for {username} – rows_affected is 0")
+        raise HTTPException(500, detail="User registration failed (database insert returned 0 rows affected)")
+
+    # 3. Immediately fetch the user to confirm it exists
+    rows = await db_execute("SELECT * FROM users WHERE username = ?", [username])
+    if not rows:
+        logger.error(f"User {username} not found after insert! Possible transaction issue.")
+        raise HTTPException(500, detail="User registration could not be verified")
+
+    logger.info(f"User {username} created successfully with id={rows[0]['id']}")
     return {"ok": True}
 
-# ---------- Login (trims input, explicit comparison, logs if mismatch) ----------
+
+# ---------- Login (with improved fallback and explicit logging) ----------
 @app.post("/api/login")
 async def login(data: dict, response: Response):
     username = data.get("username", "").strip()
@@ -1571,26 +1587,23 @@ async def login(data: dict, response: Response):
 
     logger.info(f"Login attempt: username='{username}', password='{password}'")
 
-    # Fetch user by exact username (now trimmed)
-    rows = await db_execute(
-        "SELECT * FROM users WHERE username = ?",
-        [username]
-    )
+    # Exact match
+    rows = await db_execute("SELECT * FROM users WHERE username = ?", [username])
+
+    # Case-insensitive fallback
+    if not rows:
+        rows = await db_execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", [username])
 
     if not rows:
-        # Try case‑insensitive or trimmed again as fallback
-        rows = await db_execute(
-            "SELECT * FROM users WHERE LOWER(username) = LOWER(?)",
-            [username]
-        )
-        if not rows:
-            logger.warning(f"No user found for '{username}'")
-            raise HTTPException(401, detail="User not found")
+        # Last resort: fetch all users to see what's actually in the table
+        all_users = await db_execute("SELECT username FROM users LIMIT 5")
+        logger.warning(f"No user found for '{username}'. Existing usernames: {[u['username'] for u in all_users]}")
+        raise HTTPException(401, detail="User not found")
 
     user = rows[0]
     stored_password = user.get("password_hash", "")
 
-    # Both are plain text – compare them exactly
+    # Compare plain text passwords
     if stored_password != password:
         logger.warning(
             f"Password mismatch for '{username}': "
@@ -1599,7 +1612,7 @@ async def login(data: dict, response: Response):
         )
         raise HTTPException(401, detail="Invalid credentials")
 
-    # Create JWT and session
+    # Create JWT & session
     token = jwt.encode(
         {"user_id": user["id"], "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)},
         JWT_SECRET
@@ -1611,6 +1624,11 @@ async def login(data: dict, response: Response):
         [sess_id, user["id"], "unknown", "unknown"]
     )
     return {"ok": True}
+
+@app.get("/api/debug/users")
+async def debug_users():
+    rows = await db_execute("SELECT id, username, email, password_hash FROM users")
+    return rows
 @app.get("/api/me")
 async def me(user=Depends(get_current_user)):
     return user
