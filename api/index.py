@@ -32,9 +32,8 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 
 pusher_client = pusher.Pusher(app_id=PUSHER_APP_ID, key=PUSHER_KEY, secret=PUSHER_SECRET, cluster=PUSHER_CLUSTER, ssl=True)
 
-# ---------- Turso HTTP Helpers ----------
+# ---------- Turso HTTP Helpers (FIXED) ----------
 def _infer_type(value):
-    """Return the Turso type string for a given Python value."""
     if isinstance(value, int):
         return "integer"
     if isinstance(value, float):
@@ -44,26 +43,24 @@ def _infer_type(value):
     return "text"
 
 async def turso_request(sql: str, params: list = None):
-    """Execute SQL via Turso HTTP pipeline API."""
+    """Execute SQL via Turso HTTP pipeline API (improved error/response handling)."""
     url = f"{TURSO_URL}/v2/pipeline"
     headers = {
         "Authorization": f"Bearer {TURSO_TOKEN}",
         "Content-Type": "application/json"
     }
 
-    # Build arguments with both type and value
     args_list = []
     if params:
         for p in params:
             arg_type = _infer_type(p)
-            # Map Python value to the value expected by Turso
             if arg_type == "null":
-                arg_value = None          # JSON null
+                arg_value = None
             elif arg_type == "integer":
                 arg_value = int(p)
             elif arg_type == "real":
                 arg_value = float(p)
-            else:  # text
+            else:
                 arg_value = str(p)
             args_list.append({"type": arg_type, "value": arg_value})
 
@@ -80,38 +77,63 @@ async def turso_request(sql: str, params: list = None):
         ]
     }
 
+    logger.info(f"Turso request: {sql[:120]}...")
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, headers=headers, json=body, timeout=30.0)
-        if resp.status_code != 200:
-            raise HTTPException(500, f"Database error: {resp.status_code} {resp.text}")
-        data = resp.json()
-        results = data.get("results", [])
-        if results and results[0].get("type") == "execute":
-            return _parse_execute_result(results[0])
-        return {"rows": [], "rows_affected": 0}
+        try:
+            resp = await client.post(url, headers=headers, json=body, timeout=30.0)
+            data = resp.json()
 
-def _parse_execute_result(execute_result):
-    """Convert Turso HTTP execute result to list of dicts."""
-    result = execute_result.get("response", {}).get("result", {})
-    if not result:
-        return {"rows": [], "rows_affected": 0}
-    cols = [c["name"] for c in result.get("cols", [])]
-    rows = []
-    for row in result.get("rows", []):
-        vals = []
-        for v in row:
-            if isinstance(v, dict):
-                vals.append(v.get("value"))
-            else:
-                vals.append(v)
-        rows.append(dict(zip(cols, vals)))
-    return {"rows": rows, "rows_affected": result.get("rows_affected", 0)}
+            if resp.status_code != 200:
+                logger.error(f"Turso error: {data}")
+                raise HTTPException(500, f"Database error: {resp.status_code} {data}")
+
+            # Log the full response for debugging (can be removed later)
+            logger.info(f"Turso response: {json.dumps(data, indent=2)[:500]}")
+
+            results = data.get("results", [])
+            if not results:
+                return {"rows": [], "rows_written": 0, "rows_read": 0}
+
+            # Process the first execute result
+            exec_result = results[0]
+            if exec_result.get("type") != "execute":
+                return {"rows": [], "rows_written": 0, "rows_read": 0}
+
+            response_data = exec_result.get("response", {})
+            if response_data.get("type") == "error":
+                error_msg = response_data.get("error", "unknown SQL error")
+                logger.error(f"SQL error: {error_msg}")
+                raise HTTPException(500, f"SQL error: {error_msg}")
+
+            result = response_data.get("result", {})
+            cols = [c["name"] for c in result.get("cols", [])]
+            rows_raw = result.get("rows", [])
+            rows = []
+            for row in rows_raw:
+                vals = []
+                for v in row:
+                    if isinstance(v, dict):
+                        vals.append(v.get("value"))
+                    else:
+                        vals.append(v)
+                rows.append(dict(zip(cols, vals)))
+
+            return {
+                "rows": rows,
+                "rows_written": result.get("rows_written", 0),
+                "rows_read": result.get("rows_read", 0),
+                "rows_affected": result.get("rows_affected", 0)  # legacy
+            }
+        except httpx.RequestError as e:
+            logger.error(f"Turso connection failed: {e}")
+            raise HTTPException(500, f"Database connection failed: {str(e)}")
 
 async def db_execute(sql: str, params: list = None) -> list:
     res = await turso_request(sql, params)
     return res.get("rows", [])
 
 async def db_run(sql: str, params: list = None) -> dict:
+    """Run INSERT/UPDATE/DELETE and return the full result dict."""
     return await turso_request(sql, params)
 
 # ---------- Auth Dependency ----------
@@ -1543,13 +1565,13 @@ async def health():
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
-# ---------- All API routes (your existing routes, unchanged) ----------
-# (the entire list of routes from your code above: auth, channels, messages, etc.)
-# They all remain identical – no changes needed.
+# ---------- Debug route (temporary) ----------
+@app.get("/api/debug/users")
+async def debug_users():
+    rows = await db_execute("SELECT id, username, email, password_hash FROM users")
+    return rows
 
-# ---------- Auth Routes ----------
-# ---------- Registration (trims input, logs what is saved) ----------
-# ---------- Registration (with verification) ----------
+# ---------- Registration (FIXED) ----------
 @app.post("/api/register")
 async def register(data: dict):
     username = data.get("username", "").strip()
@@ -1558,18 +1580,17 @@ async def register(data: dict):
 
     logger.info(f"Registering user: '{username}' / '{email}'")
 
-    # 1. Insert the user
     result = await db_run(
         "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
         [username, email, password]
     )
 
-    # 2. Check if the insertion actually happened (rows_affected should be 1)
-    if result.get("rows_affected", 0) == 0:
-        logger.error(f"Insert failed for {username} – rows_affected is 0")
-        raise HTTPException(500, detail="User registration failed (database insert returned 0 rows affected)")
+    # rows_written is the reliable indicator for INSERT
+    if result.get("rows_written", 0) == 0 and result.get("rows_affected", 0) == 0:
+        logger.error(f"Insert failed for {username} – write count is 0. Full result: {result}")
+        raise HTTPException(500, detail="User registration failed (database insert returned 0 rows)")
 
-    # 3. Immediately fetch the user to confirm it exists
+    # Verify existence
     rows = await db_execute("SELECT * FROM users WHERE username = ?", [username])
     if not rows:
         logger.error(f"User {username} not found after insert! Possible transaction issue.")
@@ -1578,8 +1599,7 @@ async def register(data: dict):
     logger.info(f"User {username} created successfully with id={rows[0]['id']}")
     return {"ok": True}
 
-
-# ---------- Login (with improved fallback and explicit logging) ----------
+# ---------- Login (FIXED) ----------
 @app.post("/api/login")
 async def login(data: dict, response: Response):
     username = data.get("username", "").strip()
@@ -1587,23 +1607,19 @@ async def login(data: dict, response: Response):
 
     logger.info(f"Login attempt: username='{username}', password='{password}'")
 
-    # Exact match
     rows = await db_execute("SELECT * FROM users WHERE username = ?", [username])
-
-    # Case-insensitive fallback
     if not rows:
         rows = await db_execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", [username])
 
     if not rows:
-        # Last resort: fetch all users to see what's actually in the table
-        all_users = await db_execute("SELECT username FROM users LIMIT 5")
+        # Debug: list all usernames in table
+        all_users = await db_execute("SELECT username FROM users")
         logger.warning(f"No user found for '{username}'. Existing usernames: {[u['username'] for u in all_users]}")
         raise HTTPException(401, detail="User not found")
 
     user = rows[0]
     stored_password = user.get("password_hash", "")
 
-    # Compare plain text passwords
     if stored_password != password:
         logger.warning(
             f"Password mismatch for '{username}': "
@@ -1612,7 +1628,6 @@ async def login(data: dict, response: Response):
         )
         raise HTTPException(401, detail="Invalid credentials")
 
-    # Create JWT & session
     token = jwt.encode(
         {"user_id": user["id"], "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)},
         JWT_SECRET
@@ -1625,18 +1640,11 @@ async def login(data: dict, response: Response):
     )
     return {"ok": True}
 
-@app.get("/api/debug/users")
-async def debug_users():
-    rows = await db_execute("SELECT id, username, email, password_hash FROM users")
-    return rows
 @app.get("/api/me")
 async def me(user=Depends(get_current_user)):
     return user
 
-@app.post("/api/logout")
-async def logout(response: Response, user=Depends(get_current_user)):
-    response.delete_cookie("token")
-    return {"ok": True}
+
 
 @app.put("/api/profile")
 async def update_profile(data: dict, user=Depends(get_current_user)):
