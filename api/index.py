@@ -1,15 +1,16 @@
 from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form, Response
 from fastapi.responses import JSONResponse
 from jose import jwt, JWTError
-import datetime, os, uuid, base64
-from libsql_client import create_client
+import datetime, os, uuid, base64, json
+import httpx
 import pusher
 
 app = FastAPI()
 
-# ---------- Validate environment at module level (no loop needed) ----------
+# ---------- Environment Validation ----------
 REQUIRED_ENV = [
-    "TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN",
+    "TURSO_DATABASE_URL",   # e.g. https://your-db-name.turso.io
+    "TURSO_AUTH_TOKEN",
     "PUSHER_APP_ID", "PUSHER_KEY", "PUSHER_SECRET", "PUSHER_CLUSTER",
     "JWT_SECRET"
 ]
@@ -26,49 +27,91 @@ PUSHER_SECRET = os.environ["PUSHER_SECRET"]
 PUSHER_CLUSTER = os.environ["PUSHER_CLUSTER"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 
-pusher_client = pusher.Pusher(
-    app_id=PUSHER_APP_ID,
-    key=PUSHER_KEY,
-    secret=PUSHER_SECRET,
-    cluster=PUSHER_CLUSTER,
-    ssl=True
-)
+pusher_client = pusher.Pusher(app_id=PUSHER_APP_ID, key=PUSHER_KEY, secret=PUSHER_SECRET, cluster=PUSHER_CLUSTER, ssl=True)
 
-# ---------- Database dependency (lazy, event-loop safe) ----------
-_db_client = None
+# ---------- Turso HTTP Helpers ----------
+async def turso_request(sql: str, params: list = None):
+    """Execute SQL via Turso HTTP API (pipeline endpoint)."""
+    url = f"{TURSO_URL}/v2/pipeline"
+    headers = {
+        "Authorization": f"Bearer {TURSO_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    # Build request body
+    body = {
+        "requests": [
+            {
+                "type": "execute",
+                "stmt": {
+                    "sql": sql,
+                    "args": [{"type": _infer_type(p)} for p in params] if params else []
+                }
+            },
+            {"type": "close"}
+        ]
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, headers=headers, json=body, timeout=30.0)
+        if resp.status_code != 200:
+            raise HTTPException(500, f"Database error: {resp.text}")
+        data = resp.json()
+        # Parse results
+        results = data.get("results", [])
+        if results and results[0].get("type") == "execute":
+            return _parse_execute_result(results[0])
+        return None
 
-async def get_db():
-    global _db_client
-    if _db_client is None:
-        # This runs inside a request handler -> event loop exists
-        _db_client = create_client(TURSO_URL, auth_token=TURSO_TOKEN)
-    return _db_client
+def _infer_type(value):
+    if isinstance(value, int): return "integer"
+    if isinstance(value, float): return "real"
+    if value is None: return "null"
+    return "text"
 
-# ---------- Auth Helper ----------
-async def get_current_user(request: Request, db=Depends(get_db)):
+def _parse_execute_result(execute_result):
+    """Convert Turso HTTP execute result to a list of dicts (rows)."""
+    result = execute_result.get("response", {}).get("result", {})
+    if not result:
+        return {"rows": [], "rows_affected": 0}
+    cols = [c["name"] for c in result.get("cols", [])]
+    rows = []
+    for row in result.get("rows", []):
+        # Each row is a list of values
+        vals = [v.get("value") if isinstance(v, dict) else v for v in row]
+        rows.append(dict(zip(cols, vals)))
+    return {"rows": rows, "rows_affected": result.get("rows_affected", 0)}
+
+# Helper to run and return rows only
+async def db_execute(sql: str, params: list = None) -> list:
+    res = await turso_request(sql, params)
+    return res.get("rows", [])
+
+# Helper for simple execution (no rows)
+async def db_run(sql: str, params: list = None) -> dict:
+    return await turso_request(sql, params)
+
+# ---------- Auth Dependency ----------
+async def get_current_user(request: Request):
     token = request.cookies.get("token")
     if not token:
         raise HTTPException(401)
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         user_id = payload["user_id"]
-        result = await db.execute("SELECT * FROM users WHERE id = ?", [user_id])
-        if not result.rows:
+        rows = await db_execute("SELECT * FROM users WHERE id = ?", [user_id])
+        if not rows:
             raise HTTPException(401)
-        return dict(result.rows[0])
+        return rows[0]
     except JWTError:
         raise HTTPException(401)
 
-# ---------- Helpers ----------
-async def check_membership(db, ch_id, user_id):
-    mem = await db.execute("SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=?", [ch_id, user_id])
-    if not mem.rows:
+async def check_membership(ch_id, user_id):
+    rows = await db_execute("SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=?", [ch_id, user_id])
+    if not rows:
         raise HTTPException(403)
 
 def serialize_message(row):
-    msg = dict(row)
-    msg["created_at"] = str(msg["created_at"])
-    return msg
+    row["created_at"] = str(row["created_at"])
+    return row
 
 def group_reactions(rows):
     groups = {}
@@ -80,31 +123,42 @@ def group_reactions(rows):
         groups[emoji]["users"].append({"user_id": r["user_id"], "username": r.get("username", "")})
     return list(groups.values())
 
-# ---------- Health check ----------
+# ---------- Public Config ----------
+@app.get("/api/config")
+async def config():
+    return {
+        "pusher_key": PUSHER_KEY,
+        "pusher_cluster": PUSHER_CLUSTER
+    }
+
+# ---------- Health Check ----------
 @app.get("/api/health")
-async def health(db=Depends(get_db)):
-    await db.execute("SELECT 1")
-    return {"status": "ok", "database": "connected"}
+async def health():
+    try:
+        await db_execute("SELECT 1")
+        return {"status": "ok", "database": "connected via HTTP"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 # ---------- Auth Routes ----------
 @app.post("/api/register")
-async def register(data: dict, db=Depends(get_db)):
-    await db.execute("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                     [data["username"], data["email"], data["password"]])
+async def register(data: dict):
+    await db_run("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+                 [data["username"], data["email"], data["password"]])
     return {"ok": True}
 
 @app.post("/api/login")
-async def login(data: dict, response: Response, db=Depends(get_db)):
-    user = await db.execute("SELECT * FROM users WHERE username = ? AND password_hash = ?",
+async def login(data: dict, response: Response):
+    rows = await db_execute("SELECT * FROM users WHERE username = ? AND password_hash = ?",
                             [data["username"], data["password"]])
-    if not user.rows:
+    if not rows:
         raise HTTPException(401)
-    user = dict(user.rows[0])
+    user = rows[0]
     token = jwt.encode({"user_id": user["id"], "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}, JWT_SECRET)
     response.set_cookie("token", token, httponly=True, secure=True, samesite="lax")
     sess_id = str(uuid.uuid4())
-    await db.execute("INSERT INTO sessions (id, user_id, ip, browser) VALUES (?, ?, ?, ?)",
-                     [sess_id, user["id"], "unknown", "unknown"])
+    await db_run("INSERT INTO sessions (id, user_id, ip, browser) VALUES (?, ?, ?, ?)",
+                 [sess_id, user["id"], "unknown", "unknown"])
     return {"ok": True}
 
 @app.get("/api/me")
@@ -117,35 +171,34 @@ async def logout(response: Response, user=Depends(get_current_user)):
     return {"ok": True}
 
 @app.put("/api/profile")
-async def update_profile(data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("UPDATE users SET bio=?, phone=?, avatar_url=?, status_preset=? WHERE id=?",
-                     [data.get("bio", user["bio"]), data.get("phone", user["phone"]),
-                      data.get("avatar_url", user["avatar_url"]), data.get("status_preset", user["status_preset"]),
-                      user["id"]])
+async def update_profile(data: dict, user=Depends(get_current_user)):
+    await db_run("UPDATE users SET bio=?, phone=?, avatar_url=?, status_preset=? WHERE id=?",
+                 [data.get("bio", user["bio"]), data.get("phone", user["phone"]),
+                  data.get("avatar_url", user["avatar_url"]), data.get("status_preset", user["status_preset"]),
+                  user["id"]])
     return {"ok": True}
 
 @app.post("/api/change-password")
-async def change_password(data: dict, user=Depends(get_current_user), db=Depends(get_db)):
+async def change_password(data: dict, user=Depends(get_current_user)):
     if data["old_password"] != user["password_hash"]:
         raise HTTPException(400, "Wrong password")
-    await db.execute("UPDATE users SET password_hash=? WHERE id=?", [data["new_password"], user["id"]])
+    await db_run("UPDATE users SET password_hash=? WHERE id=?", [data["new_password"], user["id"]])
     return {"ok": True}
 
 @app.post("/api/block/{user_id}")
-async def block_user(user_id: int, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)",
-                     [user["id"], user_id])
+async def block_user(user_id: int, user=Depends(get_current_user)):
+    await db_run("INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)", [user["id"], user_id])
     return {"ok": True}
 
 @app.delete("/api/block/{user_id}")
-async def unblock_user(user_id: int, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("DELETE FROM blocked_users WHERE blocker_id=? AND blocked_id=?", [user["id"], user_id])
+async def unblock_user(user_id: int, user=Depends(get_current_user)):
+    await db_run("DELETE FROM blocked_users WHERE blocker_id=? AND blocked_id=?", [user["id"], user_id])
     return {"ok": True}
 
 # ---------- Channels ----------
 @app.get("/api/channels")
-async def get_channels(user=Depends(get_current_user), db=Depends(get_db)):
-    rows = await db.execute("""
+async def get_channels(user=Depends(get_current_user)):
+    rows = await db_execute("""
         SELECT c.*, cm.unread_count, cm.starred,
             (SELECT content FROM messages WHERE channel_id=c.id AND is_deleted=0 ORDER BY created_at DESC LIMIT 1) as last_msg
         FROM channels c JOIN channel_members cm ON c.id=cm.channel_id
@@ -153,263 +206,252 @@ async def get_channels(user=Depends(get_current_user), db=Depends(get_db)):
         ORDER BY last_msg DESC
     """, [user["id"]])
     channels = []
-    for r in rows.rows:
-        ch = dict(r)
-        if ch["type"] == "direct":
-            other = await db.execute("SELECT u.username, u.avatar_url FROM channel_members cm JOIN users u ON cm.user_id=u.id WHERE cm.channel_id=? AND cm.user_id!=? LIMIT 1",
-                                     [ch["id"], user["id"]])
-            if other.rows:
-                ch["name"] = other.rows[0]["username"]
-                ch["avatar_url"] = other.rows[0]["avatar_url"]
-        channels.append(ch)
+    for r in rows:
+        if r["type"] == "direct":
+            other = await db_execute("SELECT u.username, u.avatar_url FROM channel_members cm JOIN users u ON cm.user_id=u.id WHERE cm.channel_id=? AND cm.user_id!=? LIMIT 1",
+                                     [r["id"], user["id"]])
+            if other:
+                r["name"] = other[0]["username"]
+                r["avatar_url"] = other[0]["avatar_url"]
+        channels.append(r)
     return channels
 
 @app.post("/api/channels")
-async def create_channel(data: dict, user=Depends(get_current_user), db=Depends(get_db)):
+async def create_channel(data: dict, user=Depends(get_current_user)):
     ch_id = str(uuid.uuid4())
-    await db.execute("INSERT INTO channels (id, name, type, created_by) VALUES (?, ?, ?, ?)",
-                     [ch_id, data["name"], data["type"], user["id"]])
-    await db.execute("INSERT INTO channel_members (channel_id, user_id, role) VALUES (?, ?, 'admin')", [ch_id, user["id"]])
+    await db_run("INSERT INTO channels (id, name, type, created_by) VALUES (?, ?, ?, ?)",
+                 [ch_id, data["name"], data["type"], user["id"]])
+    await db_run("INSERT INTO channel_members (channel_id, user_id, role) VALUES (?, ?, 'admin')", [ch_id, user["id"]])
     for member_id in data.get("members", []):
-        await db.execute("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, member_id])
+        await db_run("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, member_id])
     return {"id": ch_id}
 
 @app.post("/api/channels/{ch_id}/leave")
-async def leave_channel(ch_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("DELETE FROM channel_members WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
+async def leave_channel(ch_id: str, user=Depends(get_current_user)):
+    await db_run("DELETE FROM channel_members WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
     return {"ok": True}
 
 @app.post("/api/channels/{ch_id}/archive")
-async def archive_channel(ch_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("UPDATE channels SET is_archived=1 WHERE id=?", [ch_id])
+async def archive_channel(ch_id: str, user=Depends(get_current_user)):
+    await db_run("UPDATE channels SET is_archived=1 WHERE id=?", [ch_id])
     return {"ok": True}
 
 @app.post("/api/channels/{ch_id}/pin")
-async def pin_channel(ch_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("UPDATE channel_members SET starred=1 WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
+async def pin_channel(ch_id: str, user=Depends(get_current_user)):
+    await db_run("UPDATE channel_members SET starred=1 WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
     return {"ok": True}
 
 @app.post("/api/channels/{ch_id}/members")
-async def add_member(ch_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, data["user_id"]])
+async def add_member(ch_id: str, data: dict, user=Depends(get_current_user)):
+    await db_run("INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)", [ch_id, data["user_id"]])
     return {"ok": True}
 
 @app.post("/api/channels/{ch_id}/disappearing")
-async def set_disappearing(ch_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    ttl = data["ttl"]
-    await db.execute("UPDATE messages SET disappearing_ttl=? WHERE channel_id=? AND created_at > ?",
-                     [ttl, ch_id, datetime.datetime.utcnow()])
+async def set_disappearing(ch_id: str, data: dict, user=Depends(get_current_user)):
+    await db_run("UPDATE messages SET disappearing_ttl=? WHERE channel_id=? AND created_at > ?",
+                 [data["ttl"], ch_id, datetime.datetime.utcnow()])
     return {"ok": True}
 
 # ---------- Messages ----------
 @app.get("/api/channels/{ch_id}/messages")
-async def get_messages(ch_id: str, before: str = None, user=Depends(get_current_user), db=Depends(get_db)):
-    await check_membership(db, ch_id, user["id"])
-    query = "SELECT m.*, u.username, u.avatar_url FROM messages m JOIN users u ON m.user_id=u.id WHERE m.channel_id=? AND m.is_deleted=0"
+async def get_messages(ch_id: str, before: str = None, user=Depends(get_current_user)):
+    await check_membership(ch_id, user["id"])
     params = [ch_id]
+    sql = "SELECT m.*, u.username, u.avatar_url FROM messages m JOIN users u ON m.user_id=u.id WHERE m.channel_id=? AND m.is_deleted=0"
     if before:
-        query += " AND m.created_at < ?"
+        sql += " AND m.created_at < ?"
         params.append(before)
-    query += " ORDER BY m.created_at DESC LIMIT 50"
-    rows = await db.execute(query, params)
+    sql += " ORDER BY m.created_at DESC LIMIT 50"
+    rows = await db_execute(sql, params)
     messages = []
-    for r in reversed(rows.rows):
+    for r in reversed(rows):
         msg = serialize_message(r)
-        reacts = await db.execute("SELECT r.emoji, r.user_id, u.username FROM reactions r JOIN users u ON r.user_id=u.id WHERE r.message_id=?", [msg["id"]])
-        msg["reactions"] = group_reactions(reacts.rows)
-        receipts = await db.execute("SELECT user_id FROM read_receipts WHERE message_id=?", [msg["id"]])
-        msg["read_status"] = "read" if any(rr["user_id"] == user["id"] for rr in receipts.rows) else ("delivered" if receipts.rows else "sent")
+        reacts = await db_execute("SELECT r.emoji, r.user_id, u.username FROM reactions r JOIN users u ON r.user_id=u.id WHERE r.message_id=?", [msg["id"]])
+        msg["reactions"] = group_reactions(reacts)
+        receipts = await db_execute("SELECT user_id FROM read_receipts WHERE message_id=?", [msg["id"]])
+        msg["read_status"] = "read" if any(rr["user_id"] == user["id"] for rr in receipts) else ("delivered" if receipts else "sent")
         messages.append(msg)
     return messages
 
 @app.post("/api/channels/{ch_id}/messages")
 async def send_message(ch_id: str, content: str = Form(None), type: str = Form("text"),
                        file: UploadFile = File(None), reply_to: str = Form(None),
-                       thread_parent: str = Form(None), user=Depends(get_current_user), db=Depends(get_db)):
-    await check_membership(db, ch_id, user["id"])
+                       thread_parent: str = Form(None), user=Depends(get_current_user)):
+    await check_membership(ch_id, user["id"])
     msg_id = str(uuid.uuid4())
     file_url = content or ""
     if file:
         file_content = await file.read()
         file_url = f"data:{file.content_type};base64,{base64.b64encode(file_content).decode()}"
-    await db.execute("INSERT INTO messages (id, channel_id, user_id, content, type, reply_to, thread_parent) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                     [msg_id, ch_id, user["id"], file_url, type, reply_to, thread_parent])
-    msg = await db.execute("SELECT m.*, u.username, u.avatar_url FROM messages m JOIN users u ON m.user_id=u.id WHERE m.id=?", [msg_id])
-    msg = serialize_message(msg.rows[0])
+    await db_run("INSERT INTO messages (id, channel_id, user_id, content, type, reply_to, thread_parent) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 [msg_id, ch_id, user["id"], file_url, type, reply_to, thread_parent])
+    msg_rows = await db_execute("SELECT m.*, u.username, u.avatar_url FROM messages m JOIN users u ON m.user_id=u.id WHERE m.id=?", [msg_id])
+    msg = serialize_message(msg_rows[0])
     pusher_client.trigger(f'private-channel-{ch_id}', 'new-message', {'message': msg})
-    members = await db.execute("SELECT user_id FROM channel_members WHERE channel_id=? AND user_id!=?", [ch_id, user["id"]])
-    for m in members.rows:
-        await db.execute("UPDATE channel_members SET unread_count = unread_count + 1 WHERE channel_id=? AND user_id=?", [ch_id, m["user_id"]])
+    members = await db_execute("SELECT user_id FROM channel_members WHERE channel_id=? AND user_id!=?", [ch_id, user["id"]])
+    for m in members:
+        await db_run("UPDATE channel_members SET unread_count = unread_count + 1 WHERE channel_id=? AND user_id=?", [ch_id, m["user_id"]])
     return {"id": msg_id}
 
 @app.put("/api/messages/{msg_id}")
-async def edit_message(msg_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    msg = await db.execute("SELECT * FROM messages WHERE id=? AND user_id=?", [msg_id, user["id"]])
-    if not msg.rows:
+async def edit_message(msg_id: str, data: dict, user=Depends(get_current_user)):
+    msg = await db_execute("SELECT * FROM messages WHERE id=? AND user_id=?", [msg_id, user["id"]])
+    if not msg:
         raise HTTPException(403)
-    await db.execute("UPDATE messages SET content=?, is_edited=1, edited_at=CURRENT_TIMESTAMP WHERE id=?", [data["content"], msg_id])
-    updated = await db.execute("SELECT * FROM messages WHERE id=?", [msg_id])
-    pusher_client.trigger(f'private-channel-{msg.rows[0]["channel_id"]}', 'message-updated', {'message': serialize_message(updated.rows[0])})
+    await db_run("UPDATE messages SET content=?, is_edited=1, edited_at=CURRENT_TIMESTAMP WHERE id=?", [data["content"], msg_id])
+    updated = await db_execute("SELECT * FROM messages WHERE id=?", [msg_id])
+    pusher_client.trigger(f'private-channel-{msg[0]["channel_id"]}', 'message-updated', {'message': serialize_message(updated[0])})
     return {"ok": True}
 
 @app.delete("/api/messages/{msg_id}")
-async def delete_message(msg_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    msg = await db.execute("SELECT * FROM messages WHERE id=?", [msg_id])
-    if not msg.rows:
+async def delete_message(msg_id: str, user=Depends(get_current_user)):
+    msg = await db_execute("SELECT * FROM messages WHERE id=?", [msg_id])
+    if not msg:
         raise HTTPException(404)
-    ch_id = msg.rows[0]["channel_id"]
-    mem = await db.execute("SELECT role FROM channel_members WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
-    if not mem.rows or (msg.rows[0]["user_id"] != user["id"] and mem.rows[0]["role"] not in ("admin", "moderator")):
+    ch_id = msg[0]["channel_id"]
+    mem = await db_execute("SELECT role FROM channel_members WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
+    if not mem or (msg[0]["user_id"] != user["id"] and mem[0]["role"] not in ("admin", "moderator")):
         raise HTTPException(403)
-    await db.execute("UPDATE messages SET is_deleted=1 WHERE id=?", [msg_id])
+    await db_run("UPDATE messages SET is_deleted=1 WHERE id=?", [msg_id])
     pusher_client.trigger(f'private-channel-{ch_id}', 'message-deleted', {'message_id': msg_id})
     return {"ok": True}
 
 @app.post("/api/channels/{ch_id}/forward")
-async def forward_messages(ch_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
+async def forward_messages(ch_id: str, data: dict, user=Depends(get_current_user)):
     for msg_id in data["message_ids"]:
-        orig = await db.execute("SELECT * FROM messages WHERE id=?", [msg_id])
-        if orig.rows:
-            o = orig.rows[0]
+        orig = await db_execute("SELECT * FROM messages WHERE id=?", [msg_id])
+        if orig:
             new_id = str(uuid.uuid4())
-            await db.execute("INSERT INTO messages (id, channel_id, user_id, content, type) VALUES (?, ?, ?, ?, ?)",
-                             [new_id, ch_id, user["id"], o["content"], o["type"]])
+            await db_run("INSERT INTO messages (id, channel_id, user_id, content, type) VALUES (?, ?, ?, ?, ?)",
+                         [new_id, ch_id, user["id"], orig[0]["content"], orig[0]["type"]])
     pusher_client.trigger(f'private-channel-{ch_id}', 'refresh', {})
     return {"ok": True}
 
 # ---------- Reactions ----------
 @app.post("/api/messages/{msg_id}/react")
-async def react_to_message(msg_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT OR REPLACE INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)", [msg_id, user["id"], data["emoji"]])
-    msg = await db.execute("SELECT channel_id FROM messages WHERE id=?", [msg_id])
-    if msg.rows:
-        reacts = await db.execute("SELECT r.emoji, r.user_id, u.username FROM reactions r JOIN users u ON r.user_id=u.id WHERE r.message_id=?", [msg_id])
-        pusher_client.trigger(f'private-channel-{msg.rows[0]["channel_id"]}', 'reaction-updated', {
+async def react_to_message(msg_id: str, data: dict, user=Depends(get_current_user)):
+    await db_run("INSERT OR REPLACE INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)", [msg_id, user["id"], data["emoji"]])
+    msg = await db_execute("SELECT channel_id FROM messages WHERE id=?", [msg_id])
+    if msg:
+        reacts = await db_execute("SELECT r.emoji, r.user_id, u.username FROM reactions r JOIN users u ON r.user_id=u.id WHERE r.message_id=?", [msg_id])
+        pusher_client.trigger(f'private-channel-{msg[0]["channel_id"]}', 'reaction-updated', {
             'message_id': msg_id,
-            'reactions': group_reactions(reacts.rows)
+            'reactions': group_reactions(reacts)
         })
     return {"ok": True}
 
 # ---------- Typing ----------
 @app.post("/api/channels/{ch_id}/typing")
-async def typing_indicator(ch_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT OR REPLACE INTO typing_status (channel_id, user_id, started_at) VALUES (?, ?, CURRENT_TIMESTAMP)", [ch_id, user["id"]])
+async def typing_indicator(ch_id: str, user=Depends(get_current_user)):
+    await db_run("INSERT OR REPLACE INTO typing_status (channel_id, user_id, started_at) VALUES (?, ?, CURRENT_TIMESTAMP)", [ch_id, user["id"]])
     pusher_client.trigger(f'private-channel-{ch_id}', 'typing', {'user_id': user["id"], 'username': user["username"]})
     return {"ok": True}
 
 # ---------- Read Receipts ----------
 @app.post("/api/channels/{ch_id}/read")
-async def mark_read(ch_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    msgs = await db.execute("SELECT id FROM messages WHERE channel_id=? AND is_deleted=0 AND id NOT IN (SELECT message_id FROM read_receipts WHERE user_id=?)", [ch_id, user["id"]])
-    if msgs.rows:
-        for m in msgs.rows:
-            await db.execute("INSERT OR IGNORE INTO read_receipts (message_id, user_id) VALUES (?, ?)", [m["id"], user["id"]])
-        message_ids = [m["id"] for m in msgs.rows]
+async def mark_read(ch_id: str, user=Depends(get_current_user)):
+    msgs = await db_execute("SELECT id FROM messages WHERE channel_id=? AND is_deleted=0 AND id NOT IN (SELECT message_id FROM read_receipts WHERE user_id=?)", [ch_id, user["id"]])
+    if msgs:
+        for m in msgs:
+            await db_run("INSERT OR IGNORE INTO read_receipts (message_id, user_id) VALUES (?, ?)", [m["id"], user["id"]])
+        message_ids = [m["id"] for m in msgs]
         pusher_client.trigger(f'private-channel-{ch_id}', 'read-receipt', {'message_ids': message_ids, 'user_id': user["id"]})
-    await db.execute("UPDATE channel_members SET unread_count=0 WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
+    await db_run("UPDATE channel_members SET unread_count=0 WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
     return {"ok": True}
 
 # ---------- Pins ----------
 @app.post("/api/messages/{msg_id}/pin")
-async def pin_message(msg_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    msg = await db.execute("SELECT channel_id FROM messages WHERE id=?", [msg_id])
-    if msg.rows:
-        ch_id = msg.rows[0]["channel_id"]
-        await db.execute("INSERT OR IGNORE INTO message_pins (channel_id, message_id, pinned_by) VALUES (?, ?, ?)", [ch_id, msg_id, user["id"]])
-        pusher_client.trigger(f'private-channel-{ch_id}', 'message-pinned', {'message_id': msg_id})
+async def pin_message(msg_id: str, user=Depends(get_current_user)):
+    msg = await db_execute("SELECT channel_id FROM messages WHERE id=?", [msg_id])
+    if msg:
+        await db_run("INSERT OR IGNORE INTO message_pins (channel_id, message_id, pinned_by) VALUES (?, ?, ?)", [msg[0]["channel_id"], msg_id, user["id"]])
+        pusher_client.trigger(f'private-channel-{msg[0]["channel_id"]}', 'message-pinned', {'message_id': msg_id})
     return {"ok": True}
 
 # ---------- Tasks ----------
 @app.post("/api/tasks")
-async def create_task(data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT INTO tasks (user_id, message_id, title) VALUES (?, ?, ?)", [user["id"], data.get("message_id"), data["title"]])
+async def create_task(data: dict, user=Depends(get_current_user)):
+    await db_run("INSERT INTO tasks (user_id, message_id, title) VALUES (?, ?, ?)", [user["id"], data.get("message_id"), data["title"]])
     return {"ok": True}
 
 @app.get("/api/tasks")
-async def get_tasks(user=Depends(get_current_user), db=Depends(get_db)):
-    tasks = await db.execute("SELECT * FROM tasks WHERE user_id=? OR assigned_to=?", [user["id"], user["id"]])
-    return tasks.rows
+async def get_tasks(user=Depends(get_current_user)):
+    return await db_execute("SELECT * FROM tasks WHERE user_id=? OR assigned_to=?", [user["id"], user["id"]])
 
 # ---------- Bookmarks ----------
 @app.post("/api/bookmarks")
-async def add_bookmark(data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT INTO bookmarks (user_id, message_id, folder) VALUES (?, ?, ?)", [user["id"], data["message_id"], data.get("folder", "General")])
+async def add_bookmark(data: dict, user=Depends(get_current_user)):
+    await db_run("INSERT INTO bookmarks (user_id, message_id, folder) VALUES (?, ?, ?)", [user["id"], data["message_id"], data.get("folder", "General")])
     return {"ok": True}
 
 @app.get("/api/bookmarks")
-async def get_bookmarks(user=Depends(get_current_user), db=Depends(get_db)):
-    bm = await db.execute("SELECT b.*, m.content, m.channel_id FROM bookmarks b JOIN messages m ON b.message_id=m.id WHERE b.user_id=?", [user["id"]])
-    return bm.rows
+async def get_bookmarks(user=Depends(get_current_user)):
+    return await db_execute("SELECT b.*, m.content, m.channel_id FROM bookmarks b JOIN messages m ON b.message_id=m.id WHERE b.user_id=?", [user["id"]])
 
 # ---------- Tags ----------
 @app.post("/api/messages/{msg_id}/tag")
-async def add_tag(msg_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
+async def add_tag(msg_id: str, data: dict, user=Depends(get_current_user)):
     tag_name = data["tag"]
-    tag = await db.execute("SELECT id FROM tags WHERE name=?", [tag_name])
-    if not tag.rows:
-        await db.execute("INSERT INTO tags (name) VALUES (?)", [tag_name])
-        tag = await db.execute("SELECT id FROM tags WHERE name=?", [tag_name])
-    tag_id = tag.rows[0]["id"]
-    await db.execute("INSERT OR IGNORE INTO message_tags (message_id, tag_id) VALUES (?, ?)", [msg_id, tag_id])
+    tag = await db_execute("SELECT id FROM tags WHERE name=?", [tag_name])
+    if not tag:
+        await db_run("INSERT INTO tags (name) VALUES (?)", [tag_name])
+        tag = await db_execute("SELECT id FROM tags WHERE name=?", [tag_name])
+    await db_run("INSERT OR IGNORE INTO message_tags (message_id, tag_id) VALUES (?, ?)", [msg_id, tag[0]["id"]])
     return {"ok": True}
 
 # ---------- Drafts ----------
 @app.post("/api/channels/{ch_id}/draft")
-async def save_draft(ch_id: str, data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT OR REPLACE INTO drafts (channel_id, user_id, content, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)", [ch_id, user["id"], data["content"]])
+async def save_draft(ch_id: str, data: dict, user=Depends(get_current_user)):
+    await db_run("INSERT OR REPLACE INTO drafts (channel_id, user_id, content, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)", [ch_id, user["id"], data["content"]])
     return {"ok": True}
 
 @app.get("/api/channels/{ch_id}/draft")
-async def get_draft(ch_id: str, user=Depends(get_current_user), db=Depends(get_db)):
-    d = await db.execute("SELECT content FROM drafts WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
-    return d.rows[0] if d.rows else {"content": ""}
+async def get_draft(ch_id: str, user=Depends(get_current_user)):
+    d = await db_execute("SELECT content FROM drafts WHERE channel_id=? AND user_id=?", [ch_id, user["id"]])
+    return d[0] if d else {"content": ""}
 
 # ---------- Custom Statuses ----------
 @app.post("/api/status")
-async def set_status(data: dict, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT INTO custom_statuses (user_id, type, content, emoji) VALUES (?, ?, ?, ?)",
-                     [user["id"], data.get("type", "text"), data.get("content"), data.get("emoji", "")])
+async def set_status(data: dict, user=Depends(get_current_user)):
+    await db_run("INSERT INTO custom_statuses (user_id, type, content, emoji) VALUES (?, ?, ?, ?)",
+                 [user["id"], data.get("type", "text"), data.get("content"), data.get("emoji", "")])
     return {"ok": True}
 
 @app.get("/api/statuses")
-async def get_statuses(db=Depends(get_db)):
-    st = await db.execute("SELECT cs.*, u.username FROM custom_statuses cs JOIN users u ON cs.user_id=u.id ORDER BY cs.created_at DESC")
-    return st.rows
+async def get_statuses():
+    return await db_execute("SELECT cs.*, u.username FROM custom_statuses cs JOIN users u ON cs.user_id=u.id ORDER BY cs.created_at DESC")
 
 # ---------- Search ----------
 @app.get("/api/search")
-async def global_search(q: str, db=Depends(get_db)):
-    results = await db.execute("SELECT m.*, u.username FROM messages m JOIN users u ON m.user_id=u.id WHERE m.content LIKE ? AND m.is_deleted=0 LIMIT 20", [f"%{q}%"])
-    return results.rows
+async def global_search(q: str):
+    return await db_execute("SELECT m.*, u.username FROM messages m JOIN users u ON m.user_id=u.id WHERE m.content LIKE ? AND m.is_deleted=0 LIMIT 20", [f"%{q}%"])
 
 @app.get("/api/channels/{ch_id}/search")
-async def channel_search(ch_id: str, q: str, db=Depends(get_db)):
-    results = await db.execute("SELECT m.*, u.username FROM messages m JOIN users u ON m.user_id=u.id WHERE m.channel_id=? AND m.content LIKE ? AND m.is_deleted=0 LIMIT 20", [ch_id, f"%{q}%"])
-    return results.rows
+async def channel_search(ch_id: str, q: str):
+    return await db_execute("SELECT m.*, u.username FROM messages m JOIN users u ON m.user_id=u.id WHERE m.channel_id=? AND m.content LIKE ? AND m.is_deleted=0 LIMIT 20", [ch_id, f"%{q}%"])
 
 # ---------- Admin ----------
 @app.get("/api/admin/channels")
-async def admin_channels(user=Depends(get_current_user), db=Depends(get_db)):
+async def admin_channels(user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(403)
-    chs = await db.execute("SELECT * FROM channels")
-    return chs.rows
+    return await db_execute("SELECT * FROM channels")
 
 # ---------- Pusher Auth ----------
 @app.post("/api/pusher/auth")
-async def pusher_auth(request: Request, user=Depends(get_current_user), db=Depends(get_db)):
+async def pusher_auth(request: Request, user=Depends(get_current_user)):
     form = await request.form()
     channel_name = form["channel_name"]
     socket_id = form["socket_id"]
     if not channel_name.startswith("private-channel-"):
         raise HTTPException(403)
     ch_id = channel_name.split("-", 2)[2]
-    await check_membership(db, ch_id, user["id"])
+    await check_membership(ch_id, user["id"])
     auth = pusher_client.authenticate(channel=channel_name, socket_id=socket_id, custom_data={"user_id": str(user["id"])})
     return auth
 
 # ---------- Interactive Buttons ----------
 @app.post("/api/interactive/{btn_id}/respond")
-async def respond_button(btn_id: int, user=Depends(get_current_user), db=Depends(get_db)):
-    await db.execute("INSERT OR IGNORE INTO interactive_responses (button_id, user_id) VALUES (?, ?)", [btn_id, user["id"]])
+async def respond_button(btn_id: int, user=Depends(get_current_user)):
+    await db_run("INSERT OR IGNORE INTO interactive_responses (button_id, user_id) VALUES (?, ?)", [btn_id, user["id"]])
     return {"ok": True}
