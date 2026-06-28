@@ -21,7 +21,6 @@ let isLoadingMore = false;
 let pusherKey = null;
 let pusherCluster = null;
 
-// Fetch config first
 async function loadConfig() {
   const config = await apiFetch('/config');
   pusherKey = config.pusher_key;
@@ -233,7 +232,7 @@ async function initApp() {
     renderAuthScreen();
   } else {
     renderMainUI();
-    await loadConfig();          // <-- new
+    await loadConfig();          // <-- add this line
     await loadChannels();
     initPusher();
     initEventListeners();
