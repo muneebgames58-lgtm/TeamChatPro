@@ -43,7 +43,7 @@ def _infer_type(value):
     return "text"
 
 async def turso_request(sql: str, params: list = None):
-    """Execute SQL via Turso HTTP pipeline API (improved error/response handling)."""
+    """Execute SQL via Turso HTTP pipeline API – handles actual response format."""
     url = f"{TURSO_URL}/v2/pipeline"
     headers = {
         "Authorization": f"Bearer {TURSO_TOKEN}",
@@ -87,25 +87,32 @@ async def turso_request(sql: str, params: list = None):
                 logger.error(f"Turso error: {data}")
                 raise HTTPException(500, f"Database error: {resp.status_code} {data}")
 
-            # Log the full response for debugging (can be removed later)
-            logger.info(f"Turso response: {json.dumps(data, indent=2)[:500]}")
+            # Log the response structure (first 500 chars)
+            logger.info(f"Turso response type: {data.get('results',[{}])[0].get('type','unknown')}")
 
             results = data.get("results", [])
             if not results:
                 return {"rows": [], "rows_written": 0, "rows_read": 0}
 
-            # Process the first execute result
-            exec_result = results[0]
-            if exec_result.get("type") != "execute":
+            # The Turso pipeline response format (actual) is:
+            # results[0] = {"type": "ok", "response": {"type": "execute", "result": {...}}}
+            # Or sometimes just {"type": "execute", ...} (legacy)
+            first = results[0]
+            if first.get("type") == "ok":
+                # New format: nested response
+                response_data = first.get("response", {})
+                if response_data.get("type") == "error":
+                    logger.error(f"SQL error: {response_data.get('error')}")
+                    raise HTTPException(500, f"SQL error: {response_data.get('error')}")
+                result = response_data.get("result", {})
+            elif first.get("type") == "execute":
+                # Legacy format: result directly in first
+                result = first.get("result", {})
+            else:
+                logger.warning(f"Unknown Turso response type: {first.get('type')}")
                 return {"rows": [], "rows_written": 0, "rows_read": 0}
 
-            response_data = exec_result.get("response", {})
-            if response_data.get("type") == "error":
-                error_msg = response_data.get("error", "unknown SQL error")
-                logger.error(f"SQL error: {error_msg}")
-                raise HTTPException(500, f"SQL error: {error_msg}")
-
-            result = response_data.get("result", {})
+            # Extract columns and rows
             cols = [c["name"] for c in result.get("cols", [])]
             rows_raw = result.get("rows", [])
             rows = []
@@ -122,12 +129,11 @@ async def turso_request(sql: str, params: list = None):
                 "rows": rows,
                 "rows_written": result.get("rows_written", 0),
                 "rows_read": result.get("rows_read", 0),
-                "rows_affected": result.get("rows_affected", 0)  # legacy
+                "rows_affected": result.get("rows_affected", 0)   # legacy, keep for compatibility
             }
         except httpx.RequestError as e:
             logger.error(f"Turso connection failed: {e}")
             raise HTTPException(500, f"Database connection failed: {str(e)}")
-
 async def db_execute(sql: str, params: list = None) -> list:
     res = await turso_request(sql, params)
     return res.get("rows", [])
