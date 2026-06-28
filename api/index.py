@@ -1,14 +1,21 @@
-from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form, Cookie, Response
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form, Response
+from fastapi.responses import JSONResponse
 from jose import jwt, JWTError
-import datetime, os, uuid, base64, json
+import datetime, os, uuid, base64
 from libsql_client import create_client
 import pusher
 
 app = FastAPI()
-app.mount("/public", StaticFiles(directory="public"), name="public")
+
+# ---------- Environment Validation ----------
+REQUIRED_ENV = [
+    "TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN",
+    "PUSHER_APP_ID", "PUSHER_KEY", "PUSHER_SECRET", "PUSHER_CLUSTER",
+    "JWT_SECRET"
+]
+missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+if missing:
+    raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
 
 # ---------- Config ----------
 TURSO_URL = os.environ["TURSO_DATABASE_URL"]
@@ -19,19 +26,41 @@ PUSHER_SECRET = os.environ["PUSHER_SECRET"]
 PUSHER_CLUSTER = os.environ["PUSHER_CLUSTER"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 
-pusher_client = pusher.Pusher(app_id=PUSHER_APP_ID, key=PUSHER_KEY, secret=PUSHER_SECRET, cluster=PUSHER_CLUSTER, ssl=True)
+pusher_client = pusher.Pusher(
+    app_id=PUSHER_APP_ID,
+    key=PUSHER_KEY,
+    secret=PUSHER_SECRET,
+    cluster=PUSHER_CLUSTER,
+    ssl=True
+)
+
+# DB Client (async)
 db = create_client(TURSO_URL, auth_token=TURSO_TOKEN)
 
-# ---------- Helpers ----------
+# ---------- Health check ----------
+@app.get("/api/health")
+async def health():
+    try:
+        await db.execute("SELECT 1")
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+# ---------- Auth Helper ----------
 async def get_current_user(request: Request):
     token = request.cookies.get("token")
-    if not token: raise HTTPException(401)
+    if not token:
+        raise HTTPException(401)
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        result = await db.execute("SELECT * FROM users WHERE id = ?", [payload["user_id"]])
-        if not result.rows: raise HTTPException(401)
+        user_id = payload["user_id"]
+        result = await db.execute("SELECT * FROM users WHERE id = ?", [user_id])
+        if not result.rows:
+            raise HTTPException(401)
         return dict(result.rows[0])
-    except JWTError: raise HTTPException(401)
+    except JWTError:
+        raise HTTPException(401)
+
 
 def serialize_message(row):
     msg = dict(row)
